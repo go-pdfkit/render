@@ -112,7 +112,7 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			}
 
 		case "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n":
-			r.paintPath(&g, path, op.Operator, clip)
+			r.paintPath(&g, path, op.Operator, clip, resources)
 			path = vector.NewPath()
 			open = false
 			clip = noClip
@@ -129,6 +129,8 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 		case "BT", "ET", "Tf", "Tc", "Tw", "Tz", "TL", "Ts", "Tr",
 			"Td", "TD", "Tm", "T*", "Tj", "TJ", "'", "\"":
 			r.runText(&g, op.Operator, op.Operands, resources)
+		case "sh":
+			r.drawShading(&g, op.Operands, resources)
 		case "Do":
 			r.drawXObject(&g, op.Operands, resources)
 		}
@@ -158,7 +160,7 @@ func (r *renderer) rectangle(g *gstate, path *vector.Path, n []float64) {
 
 // paintPath draws the path that has been built, in whichever of the ten ways
 // the operator asks for, and then narrows the clip if one was pending.
-func (r *renderer) paintPath(g *gstate, path *vector.Path, op string, clip pendingClip) {
+func (r *renderer) paintPath(g *gstate, path *vector.Path, op string, clip pendingClip, resources reader.Dict) {
 	switch op {
 	case "s", "b", "b*":
 		path.Close()
@@ -170,13 +172,23 @@ func (r *renderer) paintPath(g *gstate, path *vector.Path, op string, clip pendi
 	if fills(op) {
 		cov, ox, oy, w, h, ok := r.rz.Fill(path, rule, r.img.W, r.img.H)
 		if ok {
-			r.paint(g, cov, ox, oy, w, h, g.fill, g.fillAlpha)
+			if g.fillPattern != nil {
+				// The rasteriser hands back its own scratch, which running a
+				// pattern's content would write over.
+				r.fillWithPattern(g, g.fillPattern, append([]float64{}, cov...), ox, oy, w, h, g.fillAlpha, resources)
+			} else {
+				r.paint(g, cov, ox, oy, w, h, g.fill, g.fillAlpha)
+			}
 		}
 	}
 	if strokes(op) {
 		cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, r.strokeStyle(g), r.img.W, r.img.H)
 		if ok {
-			r.paint(g, cov, ox, oy, w, h, g.stroke, g.strokeAlpha)
+			if g.strokePattern != nil {
+				r.fillWithPattern(g, g.strokePattern, append([]float64{}, cov...), ox, oy, w, h, g.strokeAlpha, resources)
+			} else {
+				r.paint(g, cov, ox, oy, w, h, g.stroke, g.strokeAlpha)
+			}
 		}
 	}
 	if clip == noClip {
