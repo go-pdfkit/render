@@ -1,12 +1,8 @@
-github.com/go-gfx/gfx v0.8.0 h1:syasvDpjB+yth0HVtRbqg+zfLh+KYmiIfCrF5101/00=
-github.com/go-gfx/gfx v0.8.0/go.mod h1:bFt/MWyYWRU3Ic9IaB8XOC9KLMMHRRmahMk4FaIGK7g=
-github.com/go-gfx/gfx v0.9.0 h1:PeDnDNyQNoxphct6BFw38yaUGarIGDcsSRg+W7tdYp8=
-github.com/go-gfx/gfx v0.9.0/go.mod h1:bFt/MWyYWRU3Ic9IaB8XOC9KLMMHRRmahMk4FaIGK7g=
+github.com/go-gfx/gfx v0.10.0 h1:3AqOO8TZph6/U8+ejJxYkCZ+wzddxAbZ7fxi6TvGop4=
+github.com/go-gfx/gfx v0.10.0/go.mod h1:bFt/MWyYWRU3Ic9IaB8XOC9KLMMHRRmahMk4FaIGK7g=
 github.com/go-opentype/fonts v0.8.0 h1:77i3VPIH90GbstzNb21mk+an4WvEOe2idC6W+J0n0fw=
 github.com/go-opentype/fonts v0.8.0/go.mod h1:C6yQL2apHItfEZ5hztpsHF0S5mlX/hklLlq/Z5fRG/g=
-github.com/go-opentype/opentype v0.6.0 h1:2t1Qs/Uo4M+f9gahV5QGihLTTeI/q4s0l7MIsbkd290=
-github.com/go-opentype/opentype v0.6.0/go.mod h1:AOixevJf7XQaH7+WG+OMIOZEbYPXfMqklVk26Y6YTUU=
-github.com/go-pdfkit/reader v0.2.0 h1:jY8BZkfnHw/ImyRANapU/lQrTM1d1hR960Xb9nGC+nY=
-github.com/go-pdfkit/reader v0.2.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
+github.com/go-opentype/opentype v0.7.0 h1:OUL6j9Hzq0zP2rRT1brgEjPDtYN2JDiUhz8P4f2LWRM=
+github.com/go-opentype/opentype v0.7.0/go.mod h1:AOixevJf7XQaH7+WG+OMIOZEbYPXfMqklVk26Y6YTUU=
 github.com/go-pdfkit/reader v0.3.0 h1:/r7aCt6jdOdQ7hYrnnMLxc2NuCjPfROEEy73w1O94eM=
 github.com/go-pdfkit/reader v0.3.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
