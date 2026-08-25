@@ -4,3 +4,5 @@ github.com/go-gfx/gfx v0.9.0 h1:PeDnDNyQNoxphct6BFw38yaUGarIGDcsSRg+W7tdYp8=
 github.com/go-gfx/gfx v0.9.0/go.mod h1:bFt/MWyYWRU3Ic9IaB8XOC9KLMMHRRmahMk4FaIGK7g=
 github.com/go-pdfkit/reader v0.2.0 h1:jY8BZkfnHw/ImyRANapU/lQrTM1d1hR960Xb9nGC+nY=
 github.com/go-pdfkit/reader v0.2.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
+github.com/go-pdfkit/reader v0.3.0 h1:/r7aCt6jdOdQ7hYrnnMLxc2NuCjPfROEEy73w1O94eM=
+github.com/go-pdfkit/reader v0.3.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
