@@ -99,7 +99,13 @@ func (f *pdfFont) glyphIndex(code int) opentype.GlyphIndex {
 			return gid
 		}
 	}
+	// A program that names its glyphs — a Type 1 or a CFF one — is addressed
+	// by the name the document gives the code, which is the whole point of
+	// the encoding a simple font carries.
 	if name, ok := f.names[code]; ok {
+		if gid, ok := f.program.GlyphIndexByName(name); ok && gid != 0 {
+			return gid
+		}
 		if r, ok := runeOfGlyphName(name); ok {
 			if gid, ok := f.program.GlyphIndex(r); ok && gid != 0 {
 				return gid
@@ -107,6 +113,12 @@ func (f *pdfFont) glyphIndex(code int) opentype.GlyphIndex {
 		}
 	}
 	if gid, ok := f.byChar(code); ok {
+		return gid
+	}
+	// The program's own built-in encoding is what a font with no encoding of
+	// its own in the document falls back on, and what a symbolic one meant
+	// all along.
+	if gid, ok := f.program.GlyphIndexByCode(byte(code)); ok && gid != 0 {
 		return gid
 	}
 	// Nothing said which glyph it is; a font whose codes are its own glyph
@@ -273,9 +285,9 @@ func (r *renderer) attachProgram(f *pdfFont, descriptor reader.Dict) {
 		if err != nil || img != "" {
 			continue
 		}
-		program, err := opentype.Parse(data)
+		program, err := readProgram(key, data)
 		if err != nil {
-			// A format this parser does not read leaves the font without
+			// A program this parser cannot read leaves the font without
 			// outlines; its widths still move the pen, so what follows the
 			// text stays where it belongs.
 			continue
@@ -285,6 +297,24 @@ func (r *renderer) attachProgram(f *pdfFont, descriptor reader.Dict) {
 		f.face = program.NewFace(program.UnitsPerEm())
 		return
 	}
+}
+
+// readProgram decodes an embedded font program. Which of the three keys it
+// arrived under says what it is: FontFile2 is TrueType, FontFile is a
+// PostScript Type 1 program, and FontFile3 is either a bare CFF program or a
+// whole OpenType font — the key alone does not settle that one, so both are
+// tried.
+func readProgram(key reader.Name, data []byte) (*opentype.Font, error) {
+	switch key {
+	case "FontFile":
+		return opentype.ParseType1(data)
+	case "FontFile3":
+		if f, err := opentype.Parse(data); err == nil {
+			return f, nil
+		}
+		return opentype.ParseCFF(data)
+	}
+	return opentype.Parse(data)
 }
 
 // loadComposite reads a font addressed by character identifier.
