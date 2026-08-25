@@ -18,6 +18,18 @@ type gstate struct {
 	fillSpace   *space
 	strokeSpace *space
 
+	// fillPattern and strokePattern stand in for the colour when the space
+	// in force is the Pattern one: what is drawn is then a gradient or a
+	// little drawing repeated, rather than one colour.
+	fillPattern   *pattern
+	strokePattern *pattern
+
+	// fixedColour says the colour cannot be changed from here on, which is
+	// what running an uncoloured pattern means: such a pattern is a shape
+	// only, drawn in the colour named where it was used, and every colour
+	// operator inside it is to be passed over.
+	fixedColour bool
+
 	lineWidth  float64
 	lineCap    vector.LineCap
 	lineJoin   vector.LineJoin
@@ -56,6 +68,10 @@ type renderer struct {
 	// began; both belong to the page rather than to the graphics state,
 	// which is what the specification says.
 	tm, tlm geometry.Matrix
+
+	// base is the transform the page started in, which is the space a
+	// pattern is placed in however the transform has changed since.
+	base geometry.Matrix
 
 	// fonts are the ones already read, by the object they were read from.
 	fonts map[int]*pdfFont

@@ -42,8 +42,17 @@ program's own built-in encoding when the document says nothing. A font
 whose program cannot be read still advances the pen by its stated widths,
 so what follows the text stays where it belongs.
 
-The standard fourteen faces, shadings and tiling patterns are the waves
-that follow.
+Gradients and patterns: the **axial** and **radial** shadings that carry
+nearly every gradient anyone draws, painted on their own with `sh` or used
+as a fill or a stroke; **tiling patterns**, coloured and uncoloured, run
+once per cell and clipped to the shape; and the four kinds of **function**
+the format has — a sampled grid, an exponential curve, several of them
+stitched end to end, and a little PostScript program — which are also what
+a Separation or DeviceN colour space's tint transform is written in.
+
+The mesh shadings and the standard fourteen faces are the waves that
+follow. The corpus holds 371 mesh shadings of the fourth kind and 198 of
+the seventh, against 19 923 axial and 5 589 radial ones.
 
 ## How it is checked
 
