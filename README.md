@@ -34,13 +34,16 @@ drawn wrong.
 
 Text: the whole text state and every positioning and showing operator,
 with glyphs taken from an embedded TrueType or OpenType font, from a
-composite font addressed by character identifier, or — for a Type 3 font,
-whose glyphs are little content streams — by running them. A font whose
-program cannot be read still advances the pen by its stated widths, so
-what follows the text stays where it belongs.
+**PostScript Type 1** program, from a **bare CFF** one, from a composite
+font addressed by character identifier, or — for a Type 3 font, whose
+glyphs are little content streams — by running them. A simple font is
+addressed by the name its encoding gives a code, and falls back on the
+program's own built-in encoding when the document says nothing. A font
+whose program cannot be read still advances the pen by its stated widths,
+so what follows the text stays where it belongs.
 
-Type 1 font programs, the standard fourteen faces, shadings and tiling
-patterns are the waves that follow. A
+The standard fourteen faces, shadings and tiling patterns are the waves
+that follow.
 
 ## How it is checked
 
@@ -53,9 +56,10 @@ the crop box winning over the media box, every colour space, both winding
 rules, clipping, transparency and forms are all checked the same way.
 
 Then on the corpus, for robustness rather than correctness: **4 108 pages**
-drawn from 3 999 real files with **no panics and no failures**. 26 of them
+drawn from 3 999 real files with **no panics and no failures**. 6 of them
 come out blank, which is the honest count of pages carrying nothing this
-wave understands yet — it was 373 before images, and 31 before text.
+wave understands yet — it was 373 before images, 31 before text, and 26
+before Type 1 and bare CFF font programs.
 
 And, when what is underneath changes, on the corpus again — by hashing every
 page's pixels before and after rather than by watching the exit status. That
