@@ -141,6 +141,9 @@ func TestWidthsInShapesNobodyShouldWrite(t *testing.T) {
 	}
 }
 
+// TestFontProgramsThatCannotBeRead checks that a font the document does not
+// carry, or carries in a form nothing here can read, is drawn in a stand-in
+// rather than left off the page.
 func TestFontProgramsThatCannotBeRead(t *testing.T) {
 	content := "BT /F 20 Tf 10 20 Td (A) Tj ET"
 	cases := []struct {
@@ -182,9 +185,12 @@ func TestFontProgramsThatCannotBeRead(t *testing.T) {
 			}
 			return font
 		})
-		// No outlines, so nothing is drawn — but nothing breaks either.
-		if inked(draw(t, d, Options{})) != 0 {
-			t.Errorf("%s: something was drawn", c.name)
+		// A font whose program cannot be read is drawn in a stand-in, which
+		// is what every reader does: two pages of the corpus in five carry
+		// no font at all, and drawing nothing for those would leave them
+		// with no text on them.
+		if inked(draw(t, d, Options{})) == 0 {
+			t.Errorf("%s: nothing was drawn", c.name)
 		}
 	}
 }

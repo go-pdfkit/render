@@ -6,6 +6,7 @@ import (
 	"github.com/go-opentype/opentype"
 	"github.com/go-pdfkit/pdffont"
 	"github.com/go-pdfkit/reader"
+	"math"
 )
 
 // A textState is everything a show operator reads besides the string itself.
@@ -156,7 +157,7 @@ func (r *renderer) show(g *gstate, s []byte, resources reader.Dict) {
 		if g.text.mode != modeInvisible {
 			r.drawGlyph(g, f, code, resources)
 		}
-		advance := (f.Width(code)*g.text.size + g.text.charSpace) * g.text.scale
+		advance := (f.advance(code)*g.text.size + g.text.charSpace) * g.text.scale
 		if single && code == ' ' {
 			advance += g.text.wordSpace * g.text.scale
 		}
@@ -185,6 +186,11 @@ func (r *renderer) drawGlyph(g *gstate, f *pdfFont, code int, resources reader.D
 		return
 	}
 	m := r.glyphMatrix(g).Mul(geometry.Scale(1/f.perEm, 1/f.perEm))
+	if f.slant {
+		// Leaning the glyph rather than the line, so that the pen goes on
+		// where it was going.
+		m = m.Mul(geometry.Matrix{Xx: 1, Yy: 1, Yx: fauxSlant})
+	}
 	path := vector.NewPath()
 	at := func(p opentype.Point) geometry.Point {
 		return m.TransformPoint(geometry.Point{X: p.X, Y: p.Y})
@@ -205,6 +211,32 @@ func (r *renderer) drawGlyph(g *gstate, f *pdfFont, code int, resources reader.D
 		}
 	}
 	r.paintGlyph(g, path)
+	if f.embolden {
+		// A face carried in one weight is made bold by drawing its outline as
+		// well as filling it.
+		r.thicken(g, path)
+	}
+}
+
+// thicken strokes a glyph's outline in the colour it was filled with, which is
+// what makes a face carried in one weight read as bold.
+func (r *renderer) thicken(g *gstate, path *vector.Path) {
+	width := fauxBoldWidth * g.text.size * emScale(g)
+	if width <= 0 {
+		return
+	}
+	style := vector.StrokeStyle{Width: width, Cap: vector.RoundCap, Join: vector.RoundJoin}
+	if cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, style, r.img.W, r.img.H); ok {
+		r.paint(g, cov, ox, oy, w, h, g.fill, g.fillAlpha)
+	}
+}
+
+// emScale is how many device pixels an em of text space comes to, which is
+// what a width given as a fraction of the em has to be multiplied by.
+func emScale(g *gstate) float64 {
+	x := g.ctm.Xx*g.ctm.Xx + g.ctm.Xy*g.ctm.Xy
+	y := g.ctm.Yx*g.ctm.Yx + g.ctm.Yy*g.ctm.Yy
+	return math.Sqrt(math.Sqrt(x * y))
 }
 
 // paintGlyph fills or strokes a glyph, in whichever way the text state says.
