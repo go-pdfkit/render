@@ -69,8 +69,9 @@ type renderer struct {
 	// which is what the specification says.
 	tm, tlm geometry.Matrix
 
-	// base is the transform the page started in, which is the space a
-	// pattern is placed in however the transform has changed since.
+	// base is the space a pattern is placed in, however the transform has
+	// changed since: the transform the page started in, or — inside a form —
+	// the one the form's content started in.
 	base geometry.Matrix
 
 	// fonts are the ones already read, by the object they were read from.

@@ -62,9 +62,16 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 	if !ok {
 		resources = parent
 	}
+	// A pattern named inside a form is placed in the form's own space, not
+	// the page's: the form's matrix and the transform that drew it both count.
+	// Without this a pattern used in a figure lands wherever the page's origin
+	// happens to be, which is nearly always off the shape it was meant to fill.
+	was := r.base
+	r.base = inner.ctm
 	r.depth++
 	r.run(content, resources, inner)
 	r.depth--
+	r.base = was
 }
 
 // clipToBox narrows the clip to a rectangle in the current user space.
