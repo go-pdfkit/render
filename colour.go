@@ -1,11 +1,21 @@
 package render
 
-import "github.com/go-pdfkit/reader"
+import (
+	"image/color"
+
+	"github.com/go-pdfkit/reader"
+)
 
 // setColour handles every operator that changes what colour things are drawn
 // in. The upper-case ones set the stroking colour and the lower-case ones the
 // filling colour, which is a rule the whole format keeps to.
 func (r *renderer) setColour(g *gstate, op string, operands []reader.Object, resources reader.Dict) {
+	if g.fixedColour {
+		// Inside an uncoloured pattern: the shape is the pattern's, the
+		// colour is the page's, and a colour operator here would paint over
+		// what the page asked for — with white, more often than not.
+		return
+	}
 	stroking := op == "G" || op == "RG" || op == "K" || op == "CS" || op == "SC" || op == "SCN"
 	n := numbers(operands)
 	switch op {
@@ -27,23 +37,53 @@ func (r *renderer) setColour(g *gstate, op string, operands []reader.Object, res
 			s = g.strokeSpace
 		}
 		if s.pattern {
-			// A pattern is not a colour; until patterns are drawn, the mark is
-			// made in mid grey rather than left out, so nothing disappears.
-			n = []float64{0.5}
-			s = deviceGray
+			r.setPattern(g, stroking, operands, n, resources)
+			return
 		}
 		r.assign(g, stroking, s, n)
 	}
+}
+
+// setPattern names what a mark in the Pattern space is drawn with. The last
+// operand is the pattern's name; anything in front of it is the colour an
+// uncoloured pattern draws in.
+func (r *renderer) setPattern(g *gstate, stroking bool, operands []reader.Object, n []float64, resources reader.Dict) {
+	var p *pattern
+	if len(operands) > 0 {
+		if name, ok := reader.ToName(operands[len(operands)-1]); ok {
+			p = r.readPattern(name, resources)
+		}
+	}
+	if p != nil && p.uncoloured {
+		// The numbers in front of the name are in the space the pattern was
+		// declared under, which the Pattern space names as its own.
+		under := g.fillSpace
+		if stroking {
+			under = g.strokeSpace
+		}
+		p.colour = color.RGBA{A: 255}
+		if under.under != nil {
+			p.colour = under.under.convert(n)
+		}
+	}
+	// A pattern that cannot be read leaves a mid grey rather than nothing, so
+	// that what was drawn does not vanish.
+	c := color.RGBA{R: 128, G: 128, B: 128, A: 255}
+	if stroking {
+		g.strokePattern, g.stroke = p, c
+		return
+	}
+	g.fillPattern, g.fill = p, c
 }
 
 // setSpace changes the space and resets the colour to that space's black,
 // which is what the specification requires of cs and CS.
 func (r *renderer) setSpace(g *gstate, stroking bool, s *space) {
 	if stroking {
-		g.strokeSpace, g.stroke = s, s.initial()
+		g.strokeSpace, g.stroke, g.strokePattern = s, s.initial(), nil
 		return
 	}
-	g.fillSpace, g.fill = s, s.initial()
+	g.fillSpace, g.fill, g.fillPattern = s, s.initial(), nil
 }
 
 // assign sets both the space and the colour, which is what the operators that
@@ -51,10 +91,10 @@ func (r *renderer) setSpace(g *gstate, stroking bool, s *space) {
 func (r *renderer) assign(g *gstate, stroking bool, s *space, n []float64) {
 	c := s.convert(n)
 	if stroking {
-		g.strokeSpace, g.stroke = s, c
+		g.strokeSpace, g.stroke, g.strokePattern = s, c, nil
 		return
 	}
-	g.fillSpace, g.fill = s, c
+	g.fillSpace, g.fill, g.fillPattern = s, c, nil
 }
 
 // applyExtGState reads the parameters a gs operator names. Only the ones that

@@ -19,9 +19,12 @@ type space struct {
 	lookup []byte
 	// base, for an indexed space, is what the table holds.
 	base *space
-	// pattern reports a space whose colours come from a pattern rather than
-	// from numbers, which nothing here can draw yet.
+	// pattern reports a space whose marks come from a pattern rather than
+	// from numbers.
 	pattern bool
+	// under, for a Pattern space, is the space an uncoloured pattern's own
+	// colour is given in.
+	under *space
 }
 
 // The device spaces, which every file may use without saying anything first.
@@ -136,6 +139,13 @@ func (r *renderer) colourSpaceArray(family reader.Name, arr reader.Array, resour
 	case "Separation", "DeviceN":
 		return r.separationSpace(family, arr, resources, depth)
 	case "Pattern":
+		// A Pattern space may name the space an uncoloured pattern's own
+		// colour is given in.
+		if len(arr) > 1 {
+			if under := r.colourSpace(arr[1], resources, depth+1); under != nil && !under.pattern {
+				return &space{name: "Pattern", components: under.components, convert: grayToRGBA, pattern: true, under: under}
+			}
+		}
 		return patternSpace
 	case "DeviceGray", "DeviceRGB", "DeviceCMYK":
 		return deviceSpace(family)
@@ -221,10 +231,11 @@ func (r *renderer) lookupTable(o reader.Object) []byte {
 	return nil
 }
 
-// separationSpace reads one or more tints. The tint transform that says what
-// those tints look like is a function, which this wave does not evaluate; a
-// tint of one is taken to be full ink and a tint of nothing to be none, which
-// is right for the common case of a single spot colour standing in for black.
+// separationSpace reads one or more tints and puts them through the tint
+// transform, which is a function saying what those tints actually look like in
+// some other space. A space whose transform cannot be read falls back on
+// taking a tint of one for full ink and a tint of nothing for none, which is
+// right for the common case of a single spot colour standing in for black.
 func (r *renderer) separationSpace(family reader.Name, arr reader.Array, resources reader.Dict, depth int) *space {
 	n := 1
 	if family == "DeviceN" {
@@ -234,6 +245,15 @@ func (r *renderer) separationSpace(family reader.Name, arr reader.Array, resourc
 	}
 	if n < 1 {
 		n = 1
+	}
+	if len(arr) >= 4 {
+		if alt := r.colourSpace(arr[2], resources, depth+1); alt != nil && !alt.pattern {
+			if tint := r.readFunction(arr[3], 0); tint != nil && tint.outputs() == alt.components {
+				return &space{name: family, components: n, convert: func(v []float64) color.RGBA {
+					return alt.convert(tint.eval(v))
+				}}
+			}
+		}
 	}
 	return &space{name: family, components: n, convert: func(v []float64) color.RGBA {
 		tint := 0.0
