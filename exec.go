@@ -124,6 +124,8 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 		case "g", "G", "rg", "RG", "k", "K", "cs", "CS", "sc", "scn", "SC", "SCN":
 			r.setColour(&g, op.Operator, op.Operands, resources)
 
+		case "BI":
+			r.drawInlineImage(&g, op.Image, resources)
 		case "Do":
 			r.drawXObject(&g, op.Operands, resources)
 		}
