@@ -32,8 +32,15 @@ of levels or a stencil of what to leave out. A JPEG is decoded by the
 standard library; a format nothing here reads is left undrawn rather than
 drawn wrong.
 
-Text, shadings and tiling patterns are the waves that follow. A
-page that carries only those comes out blank rather than wrong.
+Text: the whole text state and every positioning and showing operator,
+with glyphs taken from an embedded TrueType or OpenType font, from a
+composite font addressed by character identifier, or — for a Type 3 font,
+whose glyphs are little content streams — by running them. A font whose
+program cannot be read still advances the pen by its stated widths, so
+what follows the text stays where it belongs.
+
+Type 1 font programs, the standard fourteen faces, shadings and tiling
+patterns are the waves that follow. A
 
 ## How it is checked
 
@@ -46,9 +53,9 @@ the crop box winning over the media box, every colour space, both winding
 rules, clipping, transparency and forms are all checked the same way.
 
 Then on the corpus, for robustness rather than correctness: **4 108 pages**
-drawn from 3 999 real files with **no panics and no failures**. 31 of them
+drawn from 3 999 real files with **no panics and no failures**. 26 of them
 come out blank, which is the honest count of pages carrying nothing this
-wave understands yet — it was 373 before images were drawn.
+wave understands yet — it was 373 before images, and 31 before text.
 
 ## Testing
 

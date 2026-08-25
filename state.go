@@ -28,6 +28,9 @@ type gstate struct {
 	fillAlpha   float64
 	strokeAlpha float64
 
+	// text is everything the show operators read besides the string.
+	text textState
+
 	// clip is the coverage every mark is multiplied by, one value per pixel of
 	// the image, or nil when nothing is clipped away.
 	clip []float32
@@ -49,6 +52,14 @@ type renderer struct {
 
 	// depth bounds how far one form may draw another.
 	depth int
+	// tm is where the next glyph goes and tlm where the current line
+	// began; both belong to the page rather than to the graphics state,
+	// which is what the specification says.
+	tm, tlm geometry.Matrix
+
+	// fonts are the ones already read, by the object they were read from.
+	fonts map[int]*pdfFont
+
 	// ops counts what has been drawn, so a file cannot ask for an unbounded
 	// amount of work.
 	ops int
