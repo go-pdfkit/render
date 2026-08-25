@@ -57,6 +57,14 @@ drawn from 3 999 real files with **no panics and no failures**. 26 of them
 come out blank, which is the honest count of pages carrying nothing this
 wave understands yet — it was 373 before images, and 31 before text.
 
+And, when what is underneath changes, on the corpus again — by hashing every
+page's pixels before and after rather than by watching the exit status. That
+is how the two defects behind `gfx` v0.10.0 and `opentype` v0.7.0 were
+measured: a stroke assembled out of overlapping pieces came out at about half
+the colour it was asked for, and a CID font that carried no character map was
+refused outright, taking every glyph in it off the page. **3 520 of 4 057
+pages changed**; 1 705 of them gained ink, one of them twice over.
+
 ## Testing
 
 ```sh
