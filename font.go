@@ -21,6 +21,29 @@ type pdfFont struct {
 
 	// fontMatrix is a Type 3 font's glyph space, as a transform.
 	fontMatrix geometry.Matrix
+
+	// substituted says the face is a stand-in rather than the font the
+	// document named, which is what happens when the document carries no
+	// font at all.
+	substituted bool
+	// embolden and slant say the document named a bold or an italic face and
+	// the stand-in is neither, so one is made of the other.
+	embolden, slant bool
+}
+
+// advance is how far the pen moves for one code, in text space.
+//
+// It is what the document says, when the document says anything. A font it
+// does not carry may say nothing at all — one of the fourteen standard faces
+// is written with no widths, since every reader is expected to know Times and
+// Helvetica and Courier by heart — and then the stand-in's own advance is the
+// answer, which is why the stand-ins are the three faces metric-compatible
+// with those.
+func (f *pdfFont) advance(code int) float64 {
+	if f.HasWidth(code) || !f.substituted || f.face == nil {
+		return f.Width(code)
+	}
+	return float64(f.face.AdvanceIndex(f.glyphIndex(code))) / f.perEm
 }
 
 // glyph is the outline of one code, in text space — a thousandth of the point
@@ -91,6 +114,9 @@ func (r *renderer) loadFont(dict reader.Dict) *pdfFont {
 	m := f.FontMatrix()
 	f.fontMatrix = geometry.Matrix{Xx: m[0], Xy: m[1], Yx: m[2], Yy: m[3], X0: m[4], Y0: m[5]}
 	r.attachProgram(f)
+	if f.program == nil {
+		r.attachStandIn(f)
+	}
 	return f
 }
 

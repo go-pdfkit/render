@@ -1,12 +1,10 @@
 github.com/go-gfx/gfx v0.10.0 h1:3AqOO8TZph6/U8+ejJxYkCZ+wzddxAbZ7fxi6TvGop4=
 github.com/go-gfx/gfx v0.10.0/go.mod h1:bFt/MWyYWRU3Ic9IaB8XOC9KLMMHRRmahMk4FaIGK7g=
-github.com/go-opentype/fonts v0.8.0 h1:77i3VPIH90GbstzNb21mk+an4WvEOe2idC6W+J0n0fw=
-github.com/go-opentype/fonts v0.8.0/go.mod h1:C6yQL2apHItfEZ5hztpsHF0S5mlX/hklLlq/Z5fRG/g=
+github.com/go-opentype/fonts v0.9.0 h1:slB6OB3riLyUPrOxqXe0s6/AzdenF1TDvCN8N87hhQk=
+github.com/go-opentype/fonts v0.9.0/go.mod h1:C6yQL2apHItfEZ5hztpsHF0S5mlX/hklLlq/Z5fRG/g=
 github.com/go-opentype/opentype v0.9.0 h1:GFgcJ3nwTDp4NJr5O+Paw7lhZx5Jv/R+noZwvhYDlkM=
 github.com/go-opentype/opentype v0.9.0/go.mod h1:AOixevJf7XQaH7+WG+OMIOZEbYPXfMqklVk26Y6YTUU=
-github.com/go-pdfkit/pdffont v0.1.0 h1:mThWvPn3LLETup2adm9xMcNZWECP2Wq3eTSyTW4O3I0=
-github.com/go-pdfkit/pdffont v0.1.0/go.mod h1:y4vo5DgT95e57C3XxIWfA/xss+x6RwZwyj6KWdJc86s=
-github.com/go-pdfkit/reader v0.3.0 h1:/r7aCt6jdOdQ7hYrnnMLxc2NuCjPfROEEy73w1O94eM=
-github.com/go-pdfkit/reader v0.3.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
+github.com/go-pdfkit/pdffont v0.2.0 h1:yAp/oR5Z2kkqs4r0GWMalZMC7rc7XSCZXgwIypbpMWM=
+github.com/go-pdfkit/pdffont v0.2.0/go.mod h1:y4vo5DgT95e57C3XxIWfA/xss+x6RwZwyj6KWdJc86s=
 github.com/go-pdfkit/reader v0.4.0 h1:qPbNZSO+Xl+4NBvQoV1PYt7HlqHaEAQ1tUc6/IL8JAU=
 github.com/go-pdfkit/reader v0.4.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
