@@ -6,3 +6,8 @@ require (
 	github.com/go-gfx/gfx v0.9.0
 	github.com/go-pdfkit/reader v0.3.0
 )
+
+require (
+	github.com/go-opentype/fonts v0.8.0 // indirect
+	github.com/go-opentype/opentype v0.6.0 // indirect
+)
