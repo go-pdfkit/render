@@ -25,7 +25,14 @@ let go again with `Q` — the device, calibrated, profile-based, indexed,
 separation and pattern colour spaces, constant transparency, and form
 XObjects with their own matrix, bounding box and resources.
 
-Text, images, shadings and tiling patterns are the waves that follow. A
+Images too: XObjects and inline images, at every bit depth the format has,
+in every colour space, with a `/Decode` array, as one-bit stencils painted
+in the colour in force, and with either kind of transparency — a soft mask
+of levels or a stencil of what to leave out. A JPEG is decoded by the
+standard library; a format nothing here reads is left undrawn rather than
+drawn wrong.
+
+Text, shadings and tiling patterns are the waves that follow. A
 page that carries only those comes out blank rather than wrong.
 
 ## How it is checked
@@ -39,9 +46,9 @@ the crop box winning over the media box, every colour space, both winding
 rules, clipping, transparency and forms are all checked the same way.
 
 Then on the corpus, for robustness rather than correctness: **4 108 pages**
-drawn from 3 999 real files with **no panics and no failures**. 373 of them
+drawn from 3 999 real files with **no panics and no failures**. 31 of them
 come out blank, which is the honest count of pages carrying nothing this
-wave understands yet.
+wave understands yet — it was 373 before images were drawn.
 
 ## Testing
 
