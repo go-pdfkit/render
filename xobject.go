@@ -1,6 +1,8 @@
 package render
 
 import (
+	"image/color"
+
 	"github.com/go-gfx/gfx/geometry"
 	"github.com/go-gfx/gfx/vector"
 	"github.com/go-pdfkit/reader"
@@ -25,10 +27,12 @@ func (r *renderer) drawXObject(g *gstate, operands []reader.Object, resources re
 	if !ok {
 		return
 	}
-	if sub, _ := reader.ToName(resolve(r.doc, stream.Dict.Get("Subtype"))); sub != "Form" {
-		return
+	switch sub, _ := reader.ToName(resolve(r.doc, stream.Dict.Get("Subtype"))); sub {
+	case "Form":
+		r.drawForm(g, stream, resources)
+	case "Image":
+		r.drawImageXObject(g, stream, resources)
 	}
-	r.drawForm(g, stream, resources)
 }
 
 // drawForm runs a form's own content inside the state that drew it, under its
@@ -84,4 +88,40 @@ func newRectPath(m geometry.Matrix, box [4]float64) *vector.Path {
 	}
 	p.Close()
 	return p
+}
+
+// drawImageXObject decodes an image and puts it on the page. A stencil mask
+// carries no colours of its own: it paints whatever the fill colour is, which
+// is how a scanned page or a logo is drawn in one ink.
+func (r *renderer) drawImageXObject(g *gstate, stream *reader.Stream, resources reader.Dict) {
+	s := r.decodeImage(stream.Dict, stream.Raw, resources)
+	if s == nil {
+		return
+	}
+	if mask, ok := reader.ToBool(resolve(r.doc, stream.Dict.Get("ImageMask"))); ok && mask {
+		paintStencil(s, g.fill)
+	}
+	r.drawImage(g, s)
+}
+
+// paintStencil fills in the colour a one-bit mask is drawn in.
+func paintStencil(s *sampled, c color.RGBA) {
+	for i := 0; i+3 < len(s.pix); i += 4 {
+		s.pix[i], s.pix[i+1], s.pix[i+2] = c.R, c.G, c.B
+	}
+}
+
+// drawInlineImage puts an image written into the content stream itself on the
+// page. Its dictionary uses the abbreviated names an inline image is written
+// with, which the reader expands.
+func (r *renderer) drawInlineImage(g *gstate, im *reader.InlineImage, resources reader.Dict) {
+	dict := im.Expanded()
+	s := r.decodeImage(dict, im.Raw, resources)
+	if s == nil {
+		return
+	}
+	if mask, ok := reader.ToBool(resolve(r.doc, dict.Get("ImageMask"))); ok && mask {
+		paintStencil(s, g.fill)
+	}
+	r.drawImage(g, s)
 }
