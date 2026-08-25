@@ -41,8 +41,15 @@ font addressed by character identifier, or — for a Type 3 font, whose
 glyphs are little content streams — by running them. A simple font is
 addressed by the name its encoding gives a code, and falls back on the
 program's own built-in encoding when the document says nothing. A font
-whose program cannot be read still advances the pen by its stated widths,
-so what follows the text stays where it belongs.
+whose program the file does not carry at all — two pages of the corpus in
+five — is drawn in a **stand-in**: Arimo, Tinos and Cousine are
+metric-compatible with Helvetica, Times and Courier, so the text comes out
+the width it was meant to be even where the document gives no widths of its
+own. A bold is made by stroking the outline as well as filling it and an
+italic by leaning it over, since only one weight of each stand-in is carried.
+Symbol and the dingbats are left alone: no face here has their glyphs, and
+something is not better than nothing when the something is the wrong
+alphabet.
 
 Gradients and patterns: the **axial** and **radial** shadings that carry
 nearly every gradient anyone draws, painted on their own with `sh` or used
