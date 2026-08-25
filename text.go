@@ -4,6 +4,7 @@ import (
 	"github.com/go-gfx/gfx/geometry"
 	"github.com/go-gfx/gfx/vector"
 	"github.com/go-opentype/opentype"
+	"github.com/go-pdfkit/pdffont"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -150,12 +151,12 @@ func (r *renderer) show(g *gstate, s []byte, resources reader.Dict) {
 	if g.text.scale == 0 {
 		g.text.scale = 1
 	}
-	single := f.kind != compositeFont
-	for _, code := range f.codes(s) {
+	single := f.Kind() != pdffont.Composite
+	for _, code := range f.Codes(s) {
 		if g.text.mode != modeInvisible {
 			r.drawGlyph(g, f, code, resources)
 		}
-		advance := (f.width(code)*g.text.size + g.text.charSpace) * g.text.scale
+		advance := (f.Width(code)*g.text.size + g.text.charSpace) * g.text.scale
 		if single && code == ' ' {
 			advance += g.text.wordSpace * g.text.scale
 		}
@@ -175,7 +176,7 @@ func (r *renderer) glyphMatrix(g *gstate) geometry.Matrix {
 
 // drawGlyph puts one glyph on the page.
 func (r *renderer) drawGlyph(g *gstate, f *pdfFont, code int, resources reader.Dict) {
-	if f.kind == type3Font {
+	if f.Kind() == pdffont.Type3 {
 		r.drawType3Glyph(g, f, code, resources)
 		return
 	}
@@ -222,11 +223,11 @@ func (r *renderer) paintGlyph(g *gstate, path *vector.Path) {
 
 // drawType3Glyph runs the little content stream that is a Type 3 glyph.
 func (r *renderer) drawType3Glyph(g *gstate, f *pdfFont, code int, resources reader.Dict) {
-	name, ok := f.names[code]
-	if !ok || f.charProcs == nil || r.depth >= maxFormDepth {
+	name, ok := f.GlyphName(code)
+	if !ok || f.CharProcs() == nil || r.depth >= maxFormDepth {
 		return
 	}
-	stream, ok := reader.ToStream(resolve(r.doc, f.charProcs.Get(reader.Name(name))))
+	stream, ok := reader.ToStream(resolve(r.doc, f.CharProcs().Get(reader.Name(name))))
 	if !ok {
 		return
 	}
@@ -236,7 +237,7 @@ func (r *renderer) drawType3Glyph(g *gstate, f *pdfFont, code int, resources rea
 	}
 	inner := g.clone()
 	inner.ctm = r.glyphMatrix(g).Mul(f.fontMatrix)
-	res := f.t3Resources
+	res := f.Type3Resources()
 	if res == nil {
 		res = resources
 	}
