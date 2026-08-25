@@ -8,7 +8,9 @@
 
 Turns a page of a PDF into pixels, in pure Go with no C anywhere.
 
-It reads with [`reader`](https://github.com/go-pdfkit/reader), rasterises with
+It reads with [`reader`](https://github.com/go-pdfkit/reader), takes what a
+document says about its fonts from
+[`pdffont`](https://github.com/go-pdfkit/pdffont), rasterises with
 [`go-gfx/gfx`](https://github.com/go-gfx/gfx), and — where there is text —
 shapes and outlines it with
 [`go-opentype`](https://github.com/go-opentype/opentype). Nothing else: this
