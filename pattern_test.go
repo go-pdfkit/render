@@ -1,6 +1,7 @@
 package render
 
 import (
+	"image/color"
 	"testing"
 
 	"github.com/go-gfx/gfx/geometry"
@@ -278,4 +279,39 @@ func TestATilingPatternFilteredAsAnImage(t *testing.T) {
 	if _, err := Page(d, 1, Options{Scale: 1}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestAPatternInsideAFormIsPlacedInTheFormsSpace(t *testing.T) {
+	// A pattern is placed in the space the page is in, and a form's own
+	// matrix and the transform that drew it are both part of that space. A
+	// gradient used inside a form that has been moved must move with it:
+	// files written by plotting tools put every figure in a form and fill its
+	// panels with patterns, and a pattern that stayed at the page's origin
+	// would miss the shape it was asked to fill.
+	d := shadedPage(t, "q 1 0 0 1 50 50 cm /F1 Do Q", func(w *reader.Writer) reader.Dict {
+		shading := w.Add(reader.Dict{
+			"ShadingType": reader.Integer(2), "ColorSpace": reader.Name("DeviceRGB"),
+			"Coords":   nums(0, 0, 40, 0),
+			"Function": rampFunction(w),
+			"Extend":   reader.Array{reader.Bool(true), reader.Bool(true)},
+		})
+		pattern := w.Add(reader.Dict{"PatternType": reader.Integer(2), "Shading": shading})
+		form := w.Add(&reader.Stream{
+			Dict: reader.Dict{
+				"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
+				"BBox":      reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(40), reader.Integer(40)},
+				"Resources": reader.Dict{"Pattern": reader.Dict{"P1": pattern}},
+			},
+			Raw: []byte("/Pattern cs /P1 scn 0 0 40 40 re f"),
+		})
+		return reader.Dict{"XObject": reader.Dict{"F1": form}}
+	})
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The form sits from 50 to 90 across the page, and the gradient runs from
+	// red to blue over exactly that width.
+	wantColour(t, img, 52, 30, color.RGBA{R: 242, B: 12, A: 255}, 24)
+	wantColour(t, img, 87, 30, color.RGBA{R: 12, B: 242, A: 255}, 24)
 }

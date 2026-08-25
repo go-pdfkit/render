@@ -27,6 +27,8 @@ type shading struct {
 	// background is what is painted where the shading says nothing, when the
 	// shading names one.
 	background *color.RGBA
+	// mesh is set for the four kinds that carry their colours in a stream.
+	mesh *mesh
 }
 
 // readShading reads a shading dictionary — or the dictionary of a shading
@@ -70,14 +72,17 @@ func (r *renderer) readShading(o reader.Object, resources reader.Dict) *shading 
 		c := sh.space.convert(bg)
 		sh.background = &c
 	}
+	if stream, isStream := reader.ToStream(resolved); isStream && sh.kind >= 4 && sh.kind <= 7 {
+		sh.mesh = r.readMesh(sh, stream)
+	}
 	if !sh.usable() {
 		return nil
 	}
 	return sh
 }
 
-// usable reports whether the shading has what its kind needs to be drawn. The
-// mesh kinds are not drawn yet and say so here rather than by drawing wrong.
+// usable reports whether the shading has what its kind needs to be drawn. One
+// that has not says so here rather than by drawing something wrong.
 func (s *shading) usable() bool {
 	switch s.kind {
 	case 1:
@@ -86,6 +91,8 @@ func (s *shading) usable() bool {
 		return s.fn != nil && len(s.coords) >= 4 && s.fn.outputs() == s.space.components
 	case 3:
 		return s.fn != nil && len(s.coords) >= 6 && s.fn.outputs() == s.space.components
+	case 4, 5, 6, 7:
+		return s.mesh != nil
 	}
 	return false
 }
@@ -102,8 +109,7 @@ func matrixOf(v []float64) (geometry.Matrix, bool) {
 // at is the colour of the shading at a point of its own space, and false where
 // the shading covers nothing.
 func (s *shading) at(x, y float64) (color.RGBA, bool) {
-	if len(s.bbox) >= 4 && (x < math.Min(s.bbox[0], s.bbox[2]) || x > math.Max(s.bbox[0], s.bbox[2]) ||
-		y < math.Min(s.bbox[1], s.bbox[3]) || y > math.Max(s.bbox[1], s.bbox[3])) {
+	if !s.insideBBox(x, y) {
 		return s.away()
 	}
 	// Only the three kinds usable reports on ever get here.
@@ -114,6 +120,16 @@ func (s *shading) at(x, y float64) (color.RGBA, bool) {
 		return s.radialAt(x, y)
 	}
 	return s.functionAt(x, y)
+}
+
+// insideBBox reports whether a point of the shading's own space is within the
+// box the shading says it keeps to, when it says.
+func (s *shading) insideBBox(x, y float64) bool {
+	if len(s.bbox) < 4 {
+		return true
+	}
+	return x >= math.Min(s.bbox[0], s.bbox[2]) && x <= math.Max(s.bbox[0], s.bbox[2]) &&
+		y >= math.Min(s.bbox[1], s.bbox[3]) && y <= math.Max(s.bbox[1], s.bbox[3])
 }
 
 // away is what is drawn where the shading itself paints nothing.
