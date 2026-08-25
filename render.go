@@ -90,7 +90,7 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 		return nil, err
 	}
 	resources, _ := d.GetDict(page, "Resources")
-	r := &renderer{doc: d, img: img}
+	r := &renderer{doc: d, img: img, fonts: map[int]*pdfFont{}}
 	r.run(content, resources, r.initialState(box, rotation, s))
 	return img, nil
 }
