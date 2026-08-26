@@ -98,6 +98,10 @@ func (r *renderer) paintShading(g *gstate, sh *shading, m geometry.Matrix, cov [
 	if !ok || alpha <= 0 {
 		return
 	}
+	var drawn *meshRaster
+	if sh.mesh != nil {
+		drawn = sh.mesh.rasterise(m, ox, oy, w, h)
+	}
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			a := cov[y*w+x] * alpha
@@ -108,7 +112,15 @@ func (r *renderer) paintShading(g *gstate, sh *shading, m geometry.Matrix, cov [
 				continue
 			}
 			p := inv.TransformPoint(geometry.Point{X: float64(ox+x) + 0.5, Y: float64(oy+y) + 0.5})
-			c, ok := sh.at(p.X, p.Y)
+			var c color.RGBA
+			var ok bool
+			if drawn != nil {
+				if c, ok = drawn.at(ox+x, oy+y); !ok || !sh.insideBBox(p.X, p.Y) {
+					c, ok = sh.away()
+				}
+			} else {
+				c, ok = sh.at(p.X, p.Y)
+			}
 			if !ok {
 				continue
 			}
