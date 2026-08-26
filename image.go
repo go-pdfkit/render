@@ -54,10 +54,14 @@ func (r *renderer) drawImage(g *gstate, s *sampled) {
 			if g.clip != nil {
 				alpha *= float64(g.clip[y*r.img.W+x])
 			}
+			if g.softMask != nil {
+				alpha *= maskLevel(g.softMask[y*r.img.W+x])
+			}
 			if alpha <= 0 {
 				continue
 			}
 			r.img.Set(x, y, blend(r.img.At(x, y), c, alpha))
+			r.markPixel(x, y, alpha)
 		}
 	}
 }

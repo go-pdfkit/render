@@ -108,6 +108,9 @@ func (r *renderer) paintShading(g *gstate, sh *shading, m geometry.Matrix, cov [
 			if g.clip != nil {
 				a *= float64(g.clip[(oy+y)*r.img.W+(ox+x)])
 			}
+			if g.softMask != nil {
+				a *= maskLevel(g.softMask[(oy+y)*r.img.W+(ox+x)])
+			}
 			if a <= 0 {
 				continue
 			}
@@ -125,6 +128,7 @@ func (r *renderer) paintShading(g *gstate, sh *shading, m geometry.Matrix, cov [
 				continue
 			}
 			r.img.Set(ox+x, oy+y, blend(r.img.At(ox+x, oy+y), c, a))
+			r.markPixel(ox+x, oy+y, a)
 		}
 	}
 }

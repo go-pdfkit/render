@@ -46,6 +46,14 @@ type gstate struct {
 	// clip is the coverage every mark is multiplied by, one value per pixel of
 	// the image, or nil when nothing is clipped away.
 	clip []float32
+
+	// softMask is a second such grid, and multiplies alongside the clip: a
+	// clip is a shape and a soft mask is a picture, but both come down to how
+	// much of each pixel a mark is allowed to reach. It is a byte a pixel
+	// rather than the clip's float, because a mask is read off an eight-bit
+	// picture and holding it wider than it was measured would only cost
+	// memory — and a page may name a great many masks.
+	softMask []uint8
 }
 
 // clone copies a state deeply enough that saving and restoring works: the clip
@@ -77,6 +85,15 @@ type renderer struct {
 	// fonts are the ones already read, by the object they were read from.
 	fonts map[int]*pdfFont
 
+	// softMasks are the ones already drawn, since a file names one graphics
+	// state and uses it over and over.
+	softMasks map[softMaskKey][]uint8
+
+	// painted records how much of each pixel has been marked, and is set only
+	// while a soft mask of the second kind is being drawn — which is the one
+	// kind that asks not what came out but whether anything did.
+	painted []float32
+
 	// ops counts what has been drawn, so a file cannot ask for an unbounded
 	// amount of work.
 	ops int
@@ -93,10 +110,35 @@ func (r *renderer) paint(g *gstate, cov []float64, ox, oy, w, h int, c color.RGB
 	if len(cov) == 0 || alpha <= 0 {
 		return
 	}
-	if alpha < 1 || g.clip != nil {
+	if alpha < 1 || g.clip != nil || g.softMask != nil {
 		cov = r.mask(g, cov, ox, oy, w, h, alpha)
 	}
 	vector.Composite(r.img, cov, ox, oy, w, h, vector.SolidPaint{Color: c})
+	r.record(cov, ox, oy, w, h)
+}
+
+// record notes how much of each pixel a mark covered, for a soft mask that
+// asks how much was painted rather than how it came out.
+func (r *renderer) record(cov []float64, ox, oy, w, h int) {
+	if r.painted == nil {
+		return
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r.markPixel(ox+x, oy+y, cov[y*w+x])
+		}
+	}
+}
+
+// markPixel adds one mark's coverage to what is already there, the way one
+// coat of paint over another leaves less of the paper showing.
+func (r *renderer) markPixel(x, y int, a float64) {
+	if r.painted == nil || a <= 0 {
+		return
+	}
+	i := y*r.img.W + x
+	was := float64(r.painted[i])
+	r.painted[i] = float32(was + a*(1-was))
 }
 
 // mask multiplies a coverage grid by the clip and the alpha, in place on a
@@ -111,11 +153,17 @@ func (r *renderer) mask(g *gstate, cov []float64, ox, oy, w, h int, alpha float6
 			if g.clip != nil {
 				v *= float64(g.clip[(oy+y)*r.img.W+(ox+x)])
 			}
+			if g.softMask != nil {
+				v *= maskLevel(g.softMask[(oy+y)*r.img.W+(ox+x)])
+			}
 			out[i] = v
 		}
 	}
 	return out
 }
+
+// maskLevel turns one of a mask's bytes into how much it lets through.
+func maskLevel(v uint8) float64 { return float64(v) / 255 }
 
 // narrow intersects the clip with one coverage grid: what was already hidden
 // stays hidden, and everything outside the new shape joins it.

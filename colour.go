@@ -137,4 +137,9 @@ func (r *renderer) applyExtGState(g *gstate, operands []reader.Object, resources
 	if arr, ok := reader.ToArray(resolve(r.doc, params.Get("D"))); ok && len(arr) == 2 {
 		g.dash, g.dashPhase = dashPattern([]reader.Object{resolve(r.doc, arr[0]), resolve(r.doc, arr[1])})
 	}
+	// A graphics state that does not mention a soft mask leaves the one in
+	// force alone, and Get cannot tell an absent entry from a null one.
+	if entry, named := params["SMask"]; named {
+		g.softMask = r.readSoftMask(entry, g, resources)
+	}
 }
