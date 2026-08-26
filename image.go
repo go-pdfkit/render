@@ -52,7 +52,7 @@ func (r *renderer) drawImage(g *gstate, s *sampled) {
 			c := s.at(sx, sy)
 			alpha := float64(c.A) / 255 * g.fillAlpha
 			if g.clip != nil {
-				alpha *= float64(g.clip[y*r.img.W+x])
+				alpha *= g.clip.at(x, y)
 			}
 			if g.softMask != nil {
 				alpha *= maskLevel(g.softMask[y*r.img.W+x])
