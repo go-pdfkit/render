@@ -58,6 +58,26 @@ func (f *pdfFont) glyph(code int) ([]opentype.Segment, bool) {
 // glyphIndex works out which glyph of the font program a code stands for.
 func (f *pdfFont) glyphIndex(code int) opentype.GlyphIndex {
 	if f.Kind() == pdffont.Composite {
+		// How an identifier reaches a glyph depends on which sort of program
+		// carries them. A CFF one addressed by identifier maps through its own
+		// charset, which lists for each glyph in order the identifier it
+		// stands for; the map a document may supply is defined only for the
+		// TrueType-based sort and means nothing here.
+		//
+		// Taking the identifier for the glyph number, which is right for the
+		// other sort, is wrong here in the worse of the two ways: past the end
+		// of the font it draws nothing, but inside it — which is the usual
+		// case — it draws a real glyph and the wrong one. Of the glyphs such
+		// fonts were asked for across 5 999 corpus files, 11 148 came out
+		// wrong that way against 467 right.
+		if f.program != nil && f.program.IsCIDKeyed() {
+			if gid, ok := f.program.GlyphIndexByCID(code); ok {
+				return gid
+			}
+			// The font does not name that identifier at all, so there is no
+			// glyph to draw and nothing worth guessing from.
+			return 0
+		}
 		gid, _ := f.CIDToGID(code)
 		return opentype.GlyphIndex(gid)
 	}
