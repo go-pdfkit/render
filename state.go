@@ -7,6 +7,7 @@ import (
 	"github.com/go-pdfkit/reader"
 	"image"
 	"image/color"
+	"time"
 )
 
 // A gstate is everything the drawing operators read and write: where things
@@ -98,6 +99,42 @@ type renderer struct {
 	// ops counts what has been drawn, so a file cannot ask for an unbounded
 	// amount of work.
 	ops int
+
+	// deadline is when this page stops being drawn, or the zero time when it
+	// may take as long as it takes. checked is how many operations ago the
+	// clock was last looked at, since asking the machine the time is dear
+	// beside drawing a line.
+	deadline time.Time
+	checked  int
+	// ranOut records that the time passed, so that what comes back can say
+	// the page is unfinished rather than pretend it is done.
+	ranOut bool
+}
+
+// timeCheckEvery is how many operations pass between looks at the clock. A
+// page of a hundred thousand operations then asks the machine the time four
+// hundred times, which costs nothing measurable; asking on every operation
+// would cost more than some of the operations do.
+const timeCheckEvery = 256
+
+// overrun says whether the page has been drawing for longer than it was given.
+// It is asked once an operation and looks at the clock far less often.
+func (r *renderer) overrun() bool {
+	if r.deadline.IsZero() {
+		return false
+	}
+	if r.ranOut {
+		return true
+	}
+	if r.checked++; r.checked < timeCheckEvery {
+		return false
+	}
+	r.checked = 0
+	if time.Now().After(r.deadline) {
+		r.ranOut = true
+		return true
+	}
+	return false
 }
 
 // maxFormDepth is how deeply forms may nest before the page gives up.

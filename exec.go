@@ -31,6 +31,9 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 		if r.ops++; r.ops > maxOperations {
 			return
 		}
+		if r.overrun() {
+			return
+		}
 		n := numbers(op.Operands)
 		switch op.Operator {
 		case "q":
