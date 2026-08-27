@@ -55,6 +55,20 @@ type Options struct {
 	// page is worth more than nothing to somebody scrolling, and the error
 	// says plainly that it is half.
 	MaxDuration time.Duration
+	// AllLayers draws every optional-content layer, including the ones the
+	// document's default configuration turns off.
+	//
+	// The default is to draw what the document says it shows when it is
+	// opened. On the corpus that is the same picture either way: 275 of the
+	// 1 633 real forms use optional content and 161 hide a group, but not one
+	// mark on any page of any of the 8 300 files measured falls inside a layer
+	// its own configuration hides. See optional.go for the numbers and for why
+	// the mechanism is read all the same.
+	//
+	// A caller that wants everything — a tool showing a layer panel, an
+	// archive comparing what a file holds against what it displays — sets
+	// this and gets the behaviour from before optional content was read.
+	AllLayers bool
 }
 
 // ErrTimedOut says a page was still being drawn when its time ran out. The
@@ -119,6 +133,9 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 	}
 	resources, _ := d.GetDict(page, "Resources")
 	r := &renderer{doc: d, img: img, fonts: map[int]*pdfFont{}, softMasks: map[softMaskKey][]uint8{}}
+	if !opt.AllLayers {
+		r.oc = readOptional(d)
+	}
 	if opt.MaxDuration > 0 {
 		r.deadline = time.Now().Add(opt.MaxDuration)
 	}

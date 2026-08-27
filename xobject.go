@@ -29,6 +29,11 @@ func (r *renderer) drawXObject(g *gstate, operands []reader.Object, resources re
 	if !ok {
 		return
 	}
+	// A form or an image may be on a layer of its own, named on the stream
+	// rather than by a BDC around the Do.
+	if entry, named := stream.Dict["OC"]; named && r.oc.hidden(r.doc, entry) {
+		return
+	}
 	switch sub, _ := reader.ToName(resolve(r.doc, stream.Dict.Get("Subtype"))); sub {
 	case "Form":
 		r.drawForm(g, stream, resources)

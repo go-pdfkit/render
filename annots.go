@@ -63,6 +63,13 @@ func (r *renderer) skipAnnotation(dict reader.Dict) bool {
 	if sub, _ := reader.ToName(resolve(r.doc, dict.Get("Subtype"))); sub == "Popup" {
 		return true
 	}
+	// An annotation carries its own /OC, which is how a whole block of a
+	// form's fields is put on a layer. 1 373 annotations on the first three
+	// pages of the 1 633 real forms name one — though none of those names a
+	// layer that is off, so nothing in the corpus is hidden by this line.
+	if entry, named := dict["OC"]; named && r.oc.hidden(r.doc, entry) {
+		return true
+	}
 	flags, _ := reader.ToInt(resolve(r.doc, dict.Get("F")))
 	return flags&annotHidden != 0 || flags&annotNoView != 0
 }
