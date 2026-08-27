@@ -134,7 +134,7 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 	case "":
 		out = r.samples(dict, data, w, h, resources)
 	case "DCTDecode", "DCT":
-		out = decodeJPEG(data, w, h)
+		out = decodeJPEG(data, w, h, r.decodeInverts(dict))
 	default:
 		// A format nothing here can decode: the image is not drawn rather than
 		// drawn wrong.
@@ -263,11 +263,12 @@ func sampleAt(data []byte, rowStart, bitOffset, bpc int) uint32 {
 }
 
 // decodeJPEG reads the one compressed image format a PDF may carry whole.
-func decodeJPEG(data []byte, w, h int) *sampled {
+func decodeJPEG(data []byte, w, h int, inverted bool) *sampled {
 	img, err := jpegDecode(data)
 	if err != nil {
 		return nil
 	}
+	img = uninvertAdobeCMYK(img, inverted)
 	b := img.Bounds()
 	if b.Dx() != w || b.Dy() != h {
 		w, h = b.Dx(), b.Dy()
@@ -281,6 +282,59 @@ func decodeJPEG(data []byte, w, h int) *sampled {
 var jpegDecode = func(data []byte) (image.Image, error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
+}
+
+// uninvertAdobeCMYK turns a four-component JPEG's ink over.
+//
+// A CMYK JPEG written by an Adobe tool stores its ink inverted, and every PDF
+// reader turns it back: poppler, mupdf and pdf.js all do. Go's image/jpeg
+// targets JPEG files rather than PDFs and assumes the opposite — its own
+// comment says the inversion "cancels out" — so a page that other readers show
+// as a figure on white paper comes out of it almost solid black.
+//
+// # EXPERIMENT
+//
+// 35 of 8 300 corpus files carry a CMYK JPEG, 114 images between them, 95
+// carrying the Adobe marker. Rendering all 35 both ways and comparing each
+// against poppler at the same size settles which reading is right; the numbers
+// are in the commit message. It is a narrow defect and a total one: the pages
+// it hits are not slightly wrong, they are black.
+func uninvertAdobeCMYK(img image.Image, decodeInverts bool) image.Image {
+	cm, ok := img.(*image.CMYK)
+	if !ok {
+		return img
+	}
+	// A /Decode of [1 0 1 0 1 0 1 0] asks for the samples to be turned over,
+	// and that is the second half of this: the two inversions cancel, which is
+	// exactly what such a file means. Eleven DVLA forms in the corpus are
+	// written that way and eleven are drawn right today only because both
+	// halves were missing at once.
+	if decodeInverts {
+		return img
+	}
+	out := image.NewCMYK(cm.Bounds())
+	for i, v := range cm.Pix {
+		out.Pix[i] = 255 - v
+	}
+	return out
+}
+
+// decodeInverts says whether a /Decode array asks for every component to be
+// read backwards, which for an image drawn from a JPEG is the only shape of
+// /Decode the corpus contains.
+func (r *renderer) decodeInverts(dict reader.Dict) bool {
+	arr, ok := reader.ToArray(resolve(r.doc, dict.Get("Decode")))
+	if !ok || len(arr) < 2 || len(arr)%2 != 0 {
+		return false
+	}
+	for i := 0; i+1 < len(arr); i += 2 {
+		lo, ok1 := reader.ToFloat(resolve(r.doc, arr[i]))
+		hi, ok2 := reader.ToFloat(resolve(r.doc, arr[i+1]))
+		if !ok1 || !ok2 || lo != 1 || hi != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // applyTransparency reads whichever of the two ways a PDF says which parts of
