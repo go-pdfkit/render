@@ -106,7 +106,7 @@ func (r *renderer) paintShading(g *gstate, sh *shading, m geometry.Matrix, cov [
 		for x := 0; x < w; x++ {
 			a := cov[y*w+x] * alpha
 			if g.clip != nil {
-				a *= float64(g.clip[(oy+y)*r.img.W+(ox+x)])
+				a *= g.clip.at(ox+x, oy+y)
 			}
 			if g.softMask != nil {
 				a *= maskLevel(g.softMask[(oy+y)*r.img.W+(ox+x)])
