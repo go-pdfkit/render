@@ -47,7 +47,7 @@ const patchSteps = 16
 
 // readMesh reads the vertices or patches a mesh shading's stream holds.
 func (r *renderer) readMesh(sh *shading, stream *reader.Stream) *mesh {
-	data, img, err := r.doc.DecodeStream(stream)
+	data, img, err := r.salvaged(stream)
 	if err != nil || img != "" {
 		return nil
 	}

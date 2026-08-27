@@ -263,7 +263,7 @@ func (r *renderer) drawType3Glyph(g *gstate, f *pdfFont, code int, resources rea
 	if !ok {
 		return
 	}
-	content, img, err := r.doc.DecodeStream(stream)
+	content, img, err := r.salvaged(stream)
 	if err != nil || img != "" {
 		return
 	}

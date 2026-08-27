@@ -223,7 +223,7 @@ func (r *renderer) lookupTable(o reader.Object) []byte {
 		return s
 	}
 	if stream, ok := reader.ToStream(resolved); ok {
-		data, img, err := r.doc.DecodeStream(stream)
+		data, img, err := r.salvaged(stream)
 		if err == nil && img == "" {
 			return data
 		}

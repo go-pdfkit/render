@@ -37,7 +37,7 @@ func (r *renderer) readCalculator(base functionBase, dict reader.Dict, stream *r
 	if stream == nil || len(base.rng) < 2 {
 		return nil
 	}
-	data, img, err := r.doc.DecodeStream(stream)
+	data, img, err := r.salvaged(stream)
 	if err != nil || img != "" {
 		return nil
 	}

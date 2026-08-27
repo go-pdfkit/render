@@ -104,8 +104,12 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 	if w <= 0 || h <= 0 || w*h > maxImagePixels {
 		return nil
 	}
-	data, imageFilter, err := reader.Decode(dict, raw, r.doc.Resolver())
-	if err != nil {
+	// An image whose filter chain broke part way gives the rows it managed,
+	// which is what a viewer shows for a truncated scan. Bytes no filter
+	// decoded are in a field this cannot reach.
+	dec := reader.DecodeRecovering(dict, raw, r.doc.Resolver())
+	data, imageFilter := dec.Data, dec.Image
+	if len(data) == 0 {
 		return nil
 	}
 	if mask, ok := reader.ToBool(resolve(r.doc, dict.Get("ImageMask"))); ok && mask {
