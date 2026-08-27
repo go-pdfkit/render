@@ -109,6 +109,20 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 		return nil
 	}
 	if mask, ok := reader.ToBool(resolve(r.doc, dict.Get("ImageMask"))); ok && mask {
+		// A stencil is one bit a pixel, so the bytes have to be samples. When
+		// the filter chain stopped at an image format nothing here decodes,
+		// they are not: they are still compressed, and drawing them paints
+		// noise through the shape of nothing.
+		//
+		// 273 of the image masks in the 1 633 real forms carry an encoded
+		// filter. 236 of them were faxes, which the reader now decodes; the
+		// nine that remain are JBIG2, and until something decodes those the
+		// honest answer is not to draw them. That is the rule the rest of this
+		// function already follows: "the image is not drawn rather than drawn
+		// wrong".
+		if imageFilter != "" {
+			return nil
+		}
 		return r.stencil(dict, data, w, h)
 	}
 	var out *sampled

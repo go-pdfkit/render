@@ -459,3 +459,62 @@ func TestAnImageUnderAClip(t *testing.T) {
 	wantBlack(t, img, 5, 10)
 	wantWhite(t, img, 15, 10)
 }
+
+func TestAMaskWhoseBytesAreStillEncodedIsNotDrawn(t *testing.T) {
+	// A stencil is one bit a pixel, so the bytes have to be samples. A mask
+	// whose filter chain stopped at an image format nothing here decodes is
+	// still compressed, and painting it puts noise on the page in the shape of
+	// nothing at all.
+	//
+	// 273 of the image masks in the 1 633 real forms carry an encoded filter.
+	// 236 were faxes, which the reader decodes as of go-pdfkit/reader#15; the
+	// nine that remain are JBIG2. Fifty-one first pages of real forms were
+	// showing this noise before either change.
+	for _, tc := range []struct {
+		name   string
+		filter reader.Name
+		drawn  bool
+	}{
+		{"a format nothing here decodes", "JBIG2Decode", false},
+		{"no filter at all", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := reader.NewWriter("1.7")
+			pagesRef := w.Reserve()
+			dict := reader.Dict{"Type": reader.Name("XObject"),
+				"Subtype": reader.Name("Image"), "Width": reader.Integer(8),
+				"Height": reader.Integer(8), "ImageMask": reader.Bool(true),
+				"BitsPerComponent": reader.Integer(1)}
+			if tc.filter != "" {
+				dict["Filter"] = tc.filter
+			}
+			// Eight rows of a byte each, every bit zero: as samples that is a
+			// solid black stencil, so anything drawn at all is visible.
+			img := w.Add(&reader.Stream{Dict: dict, Raw: make([]byte, 8)})
+			page := reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+				"MediaBox":  nums(0, 0, 20, 20),
+				"Resources": reader.Dict{"XObject": reader.Dict{"M": img}},
+				"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+					Raw: []byte("0 g q 20 0 0 20 0 0 cm /M Do Q")})}
+			pageRef := w.Add(page)
+			w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+				"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+			out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+				"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, err := reader.Open(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pic, err := Page(doc, 1, Options{Scale: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if drawn := inked(pic) > 0; drawn != tc.drawn {
+				t.Errorf("drawn = %v, want %v", drawn, tc.drawn)
+			}
+		})
+	}
+}
