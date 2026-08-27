@@ -31,6 +31,11 @@ type Options struct {
 	// media box a file made up cannot be asked to fill memory. Zero means
 	// forty million, which is a little over A4 at 600 dots to the inch.
 	MaxPixels int
+	// NoAnnotations leaves out what the page carries beside its content: the
+	// notes, the highlights, the stamps, and the fields of a form. They are
+	// drawn by default, because a filled-in form drawn without them is a form
+	// with nothing in it.
+	NoAnnotations bool
 }
 
 // defaultMaxPixels is a little more than A4 at 600 dots to the inch.
@@ -94,6 +99,9 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 	start := r.initialState(box, rotation, s)
 	r.base = start.ctm
 	r.run(content, resources, start)
+	if !opt.NoAnnotations {
+		r.drawAnnotations(page, start)
+	}
 	return img, nil
 }
 
