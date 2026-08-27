@@ -1,7 +1,9 @@
 package render
 
 import (
+	"image"
 	"image/color"
+	"math"
 
 	"github.com/go-gfx/gfx/geometry"
 	"github.com/go-gfx/gfx/vector"
@@ -54,9 +56,12 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 		}
 		inner.ctm = inner.ctm.Mul(matrix(n))
 	}
-	// A form's bounding box clips what it draws, which files rely on.
+	// A form's bounding box clips what it draws, which files rely on, and it
+	// is also as far as the form can reach.
+	region := image.Rect(0, 0, r.img.W, r.img.H)
 	if box, ok := rectangle(r.doc, stream.Dict.Get("BBox")); ok {
 		r.clipToBox(&inner, box)
+		region = boxBounds(inner.ctm, box, r.img.W, r.img.H)
 	}
 	resources, ok := r.doc.GetDict(stream.Dict, "Resources")
 	if !ok {
@@ -69,9 +74,100 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 	was := r.base
 	r.base = inner.ctm
 	r.depth++
-	r.run(content, resources, inner)
+	if r.isGroup(stream) && (g.fillAlpha < 1 || g.softMask != nil) {
+		r.runGroup(g, content, resources, inner, region)
+	} else {
+		r.run(content, resources, inner)
+	}
 	r.depth--
 	r.base = was
+}
+
+// isGroup reports whether a form says it is a transparency group, which is a
+// file saying that what is inside it belongs together.
+func (r *renderer) isGroup(stream *reader.Stream) bool {
+	group, ok := r.doc.GetDict(stream.Dict, "Group")
+	if !ok {
+		return false
+	}
+	kind, _ := reader.ToName(resolve(r.doc, group.Get("S")))
+	return kind == "Transparency"
+}
+
+// runGroup draws a transparency group as one thing. Everything inside it goes
+// on at full strength against a copy of the page, and then the whole of it is
+// laid over the page at the strength in force where it was used — the alpha,
+// and the soft mask, and both together.
+//
+// The difference this makes is the difference between a shadow that fades and
+// fifty overlapping shapes each fading on their own, which is what drawing the
+// contents one mark at a time comes to: every overlap doubles up and the thing
+// comes out darker at its seams than anywhere else.
+func (r *renderer) runGroup(g *gstate, content []byte, resources reader.Dict, inner gstate, region image.Rectangle) {
+	// Inside a group the alpha starts again at one and the mask is set aside,
+	// since both are about to be applied to the result instead.
+	inner.fillAlpha, inner.strokeAlpha, inner.softMask = 1, 1, nil
+	if region.Empty() {
+		return
+	}
+	// Only the part of the page the form's own box can reach is kept and put
+	// back, since that is as far as anything inside it can draw.
+	w, h := region.Dx(), region.Dy()
+	before := make([]uint8, w*h*4)
+	for y := 0; y < h; y++ {
+		from := ((region.Min.Y+y)*r.img.W + region.Min.X) * 4
+		copy(before[y*w*4:(y+1)*w*4], r.img.Pix[from:from+w*4])
+	}
+
+	// How much of the group reached each pixel, kept only when this group is
+	// itself inside a mask that asks that question.
+	var covered []float32
+	wasPainted := r.painted
+	if wasPainted != nil {
+		covered = make([]float32, r.img.W*r.img.H)
+	}
+	r.painted = covered
+	r.run(content, resources, inner)
+	r.painted = wasPainted
+
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			px, py := region.Min.X+x, region.Min.Y+y
+			i := py*r.img.W + px
+			a := g.fillAlpha
+			if g.softMask != nil {
+				a *= maskLevel(g.softMask[i])
+			}
+			if wasPainted != nil {
+				r.markPixel(px, py, float64(covered[i])*a)
+			}
+			if a >= 1 {
+				continue
+			}
+			was := before[(y*w+x)*4:]
+			if a <= 0 {
+				copy(r.img.Pix[i*4:i*4+4], was[:4])
+				continue
+			}
+			for c := 0; c < 3; c++ {
+				k := i*4 + c
+				r.img.Pix[k] = uint8(math.Round(float64(was[c])*(1-a) + float64(r.img.Pix[k])*a))
+			}
+		}
+	}
+}
+
+// boxBounds is the part of the image a rectangle in user space can reach.
+func boxBounds(m geometry.Matrix, box [4]float64, w, h int) image.Rectangle {
+	minX, minY := math.Inf(1), math.Inf(1)
+	maxX, maxY := math.Inf(-1), math.Inf(-1)
+	for _, c := range [][2]float64{{box[0], box[1]}, {box[2], box[1]}, {box[2], box[3]}, {box[0], box[3]}} {
+		p := m.TransformPoint(geometry.Point{X: c[0], Y: c[1]})
+		minX, minY = math.Min(minX, p.X), math.Min(minY, p.Y)
+		maxX, maxY = math.Max(maxX, p.X), math.Max(maxY, p.Y)
+	}
+	return image.Rect(int(math.Floor(minX)), int(math.Floor(minY)),
+		int(math.Ceil(maxX))+1, int(math.Ceil(maxY))+1).Intersect(image.Rect(0, 0, w, h))
 }
 
 // clipToBox narrows the clip to a rectangle in the current user space.
