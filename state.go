@@ -109,6 +109,16 @@ type renderer struct {
 	// ranOut records that the time passed, so that what comes back can say
 	// the page is unfinished rather than pretend it is done.
 	ranOut bool
+
+	// oc is which of the document's layers are not to be shown. It is empty
+	// when the document has no optional content, and when the caller asked
+	// for every layer.
+	oc optional
+	// mc is how deeply marked content is nested in the stream being run, and
+	// hideAt the depth at which a layer that is off began — zero when nothing
+	// is hidden. Marked content does not span streams, so both are saved and
+	// restored around a nested one.
+	mc, hideAt int
 }
 
 // timeCheckEvery is how many operations pass between looks at the clock. A

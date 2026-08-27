@@ -20,6 +20,12 @@ const (
 
 // run executes a content stream against a graphics state.
 func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
+	// Marked content does not reach across streams: a form's BDC has nothing
+	// to do with the page's, and a stream that opens one and never closes it
+	// must not leave the next stream hidden.
+	mc, hideAt := r.mc, r.hideAt
+	r.mc, r.hideAt = 0, 0
+	defer func() { r.mc, r.hideAt = mc, hideAt }()
 	stack := []gstate{}
 	path := vector.NewPath()
 	var start, current geometry.Point
@@ -127,14 +133,38 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 		case "g", "G", "rg", "RG", "k", "K", "cs", "CS", "sc", "scn", "SC", "SCN":
 			r.setColour(&g, op.Operator, op.Operands, resources)
 
+		case "BDC", "BMC":
+			r.mc++
+			// Only the outermost hidden layer is remembered: a layer inside
+			// one that is already off cannot turn it back on.
+			if r.hideAt == 0 && op.Operator == "BDC" && r.hiddenProperty(op.Operands, resources) {
+				r.hideAt = r.mc
+			}
+		case "EMC":
+			if r.hideAt == r.mc {
+				r.hideAt = 0
+			}
+			if r.mc > 0 {
+				r.mc--
+			}
+
 		case "BI":
+			if r.suppressed() {
+				break
+			}
 			r.drawInlineImage(&g, op.Image, resources)
 		case "BT", "ET", "Tf", "Tc", "Tw", "Tz", "TL", "Ts", "Tr",
 			"Td", "TD", "Tm", "T*", "Tj", "TJ", "'", "\"":
 			r.runText(&g, op.Operator, op.Operands, resources)
 		case "sh":
+			if r.suppressed() {
+				break
+			}
 			r.drawShading(&g, op.Operands, resources)
 		case "Do":
+			if r.suppressed() {
+				break
+			}
 			r.drawXObject(&g, op.Operands, resources)
 		}
 	}
@@ -172,7 +202,7 @@ func (r *renderer) paintPath(g *gstate, path *vector.Path, op string, clip pendi
 	if op == "f*" || op == "B*" || op == "b*" {
 		rule = vector.EvenOdd
 	}
-	if fills(op) {
+	if fills(op) && !r.suppressed() {
 		cov, ox, oy, w, h, ok := r.rz.Fill(path, rule, r.img.W, r.img.H)
 		if ok {
 			if g.fillPattern != nil {
@@ -184,7 +214,7 @@ func (r *renderer) paintPath(g *gstate, path *vector.Path, op string, clip pendi
 			}
 		}
 	}
-	if strokes(op) {
+	if strokes(op) && !r.suppressed() {
 		cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, r.strokeStyle(g), r.img.W, r.img.H)
 		if ok {
 			if g.strokePattern != nil {

@@ -154,7 +154,7 @@ func (r *renderer) show(g *gstate, s []byte, resources reader.Dict) {
 	}
 	single := f.Kind() != pdffont.Composite
 	for _, code := range f.Codes(s) {
-		if g.text.mode != modeInvisible {
+		if g.text.mode != modeInvisible && !r.suppressed() {
 			r.drawGlyph(g, f, code, resources)
 		}
 		advance := (f.advance(code)*g.text.size + g.text.charSpace) * g.text.scale
