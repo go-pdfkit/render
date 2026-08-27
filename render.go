@@ -8,8 +8,10 @@
 package render
 
 import (
+	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/go-gfx/gfx/geometry"
 	"github.com/go-gfx/gfx/raster"
@@ -36,7 +38,28 @@ type Options struct {
 	// drawn by default, because a filled-in form drawn without them is a form
 	// with nothing in it.
 	NoAnnotations bool
+	// MaxDuration is how long the page may be drawn for. Zero means as long as
+	// it takes, which is what this did before there was anywhere to say
+	// otherwise.
+	//
+	// Some pages take a very long time. Of 59 432 corpus pages drawn at half
+	// as much again as their own size, 1 131 were still going after twenty
+	// seconds, and one figure took two hundred and seventy-three. A caller
+	// drawing somebody else's file — a browser tab, a queue of them, a server
+	// — cannot afford to wait for the worst of those and has, until now, had
+	// no way to say so: MaxPixels bounds what comes out, and nothing bounded
+	// the work of making it.
+	//
+	// When the time runs out the page stops being drawn and comes back as far
+	// as it got, with ErrTimedOut. That is deliberately not a blank: half a
+	// page is worth more than nothing to somebody scrolling, and the error
+	// says plainly that it is half.
+	MaxDuration time.Duration
 }
+
+// ErrTimedOut says a page was still being drawn when its time ran out. The
+// image returned with it holds what had been drawn by then.
+var ErrTimedOut = errors.New("render: the page was still being drawn when its time ran out")
 
 // defaultMaxPixels is a little more than A4 at 600 dots to the inch.
 const defaultMaxPixels = 40 << 20
@@ -96,11 +119,17 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 	}
 	resources, _ := d.GetDict(page, "Resources")
 	r := &renderer{doc: d, img: img, fonts: map[int]*pdfFont{}, softMasks: map[softMaskKey][]uint8{}}
+	if opt.MaxDuration > 0 {
+		r.deadline = time.Now().Add(opt.MaxDuration)
+	}
 	start := r.initialState(box, rotation, s)
 	r.base = start.ctm
 	r.run(content, resources, start)
 	if !opt.NoAnnotations {
 		r.drawAnnotations(page, start)
+	}
+	if r.ranOut {
+		return img, ErrTimedOut
 	}
 	return img, nil
 }
