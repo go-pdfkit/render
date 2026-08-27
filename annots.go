@@ -119,7 +119,7 @@ func (r *renderer) appearanceOf(dict reader.Dict) (*reader.Stream, bool) {
 // rectangle — which is what makes a stamp put down at an angle land inside the
 // box that was drawn for it.
 func (r *renderer) drawAppearance(base gstate, stream *reader.Stream, rect [4]float64) {
-	content, img, err := r.doc.DecodeStream(stream)
+	content, img, err := r.salvaged(stream)
 	if err != nil || img != "" {
 		return
 	}

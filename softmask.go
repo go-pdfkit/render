@@ -72,7 +72,7 @@ func (r *renderer) readSoftMask(entry reader.Object, g *gstate, resources reader
 // drawSoftMask draws the mask's form on paper of its own and reads the mask
 // off what comes out.
 func (r *renderer) drawSoftMask(dict reader.Dict, form *reader.Stream, kind reader.Name, g *gstate, resources reader.Dict) []uint8 {
-	content, img, err := r.doc.DecodeStream(form)
+	content, img, err := r.salvaged(form)
 	if err != nil || img != "" {
 		return nil
 	}

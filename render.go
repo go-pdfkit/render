@@ -127,10 +127,27 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 	img := raster.New(w, h)
 	fill(img, opt.background())
 
-	content, err := d.PageContent(i)
-	if err != nil {
-		return nil, err
+	// A page's content is drawn as far as it decoded. 263 streams in 212 of
+	// the 1 633 real forms cannot be decoded cleanly, and a strict read hands
+	// back nothing for all of them; this package already draws a page as far as
+	// it got when its time runs out, and a damaged stream is the same
+	// situation arriving another way.
+	//
+	// Nothing that no filter decoded is ever run: the reader keeps those bytes
+	// in Undecoded, set instead of Data rather than beside it, so taking Data
+	// cannot reach them. A page whose /Contents is filtered as an image — a
+	// JPEG where operators should be — arrives here with Data empty and a
+	// cause, and is refused rather than run.
+	// The error is dropped: PageContentDecoded returns one only when the page
+	// itself cannot be read, and it was read a few lines above. A /Contents
+	// that points at an object the file does not hold resolves to nothing
+	// rather than to an error, and a page with no content is a blank page —
+	// which is what this drew before and what other readers draw.
+	dec, _ := d.PageContentDecoded(i)
+	if len(dec.Data) == 0 && dec.Cause != nil {
+		return nil, dec.Cause
 	}
+	content := dec.Data
 	resources, _ := d.GetDict(page, "Resources")
 	r := &renderer{doc: d, img: img, fonts: map[int]*pdfFont{}, softMasks: map[softMaskKey][]uint8{}}
 	if !opt.AllLayers {

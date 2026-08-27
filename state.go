@@ -278,3 +278,24 @@ func (r *renderer) narrow(g *gstate, cov []float64, ox, oy, w, h int, ok bool) {
 	}
 	g.clip = next
 }
+
+// salvaged decodes a stream and keeps whatever the filter chain managed to
+// produce, which is not the same as keeping whatever bytes are left.
+//
+// 263 streams in 212 of the 1 633 real forms — 13.0% of them — cannot be
+// decoded cleanly, and a strict decode hands back nothing for all 263. This
+// package already draws a page as far as it got when its time runs out, and a
+// damaged stream is the same situation arriving a different way: half a figure
+// is worth more to somebody reading a form than none of it.
+//
+// What must never happen is bytes no filter decoded being painted as though
+// they were content. reader.Decoded keeps those in a separate field, set
+// instead of Data rather than beside it, so this reads Data and cannot reach
+// them. That is a type doing the work, not a flag anyone has to remember.
+func (r *renderer) salvaged(stream *reader.Stream) ([]byte, reader.Name, error) {
+	dec := r.doc.DecodeStreamRecovering(stream)
+	if len(dec.Data) == 0 && dec.Cause != nil {
+		return nil, "", dec.Cause
+	}
+	return dec.Data, dec.Image, nil
+}

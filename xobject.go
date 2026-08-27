@@ -45,7 +45,7 @@ func (r *renderer) drawXObject(g *gstate, operands []reader.Object, resources re
 // drawForm runs a form's own content inside the state that drew it, under its
 // own matrix and its own bounding box.
 func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict) {
-	content, img, err := r.doc.DecodeStream(stream)
+	content, img, err := r.salvaged(stream)
 	if err != nil || img != "" {
 		return
 	}
