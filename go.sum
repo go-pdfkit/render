@@ -6,5 +6,5 @@ github.com/go-opentype/opentype v0.10.0 h1:cZVMZ3RVkcijXmxlmpqyVkjlNc33aSB2ugKVW
 github.com/go-opentype/opentype v0.10.0/go.mod h1:AOixevJf7XQaH7+WG+OMIOZEbYPXfMqklVk26Y6YTUU=
 github.com/go-pdfkit/pdffont v0.3.0 h1:G5DKcAmsZJ0e17QhSrcUaL7PKEXKjUx4P/iGMl7bAbI=
 github.com/go-pdfkit/pdffont v0.3.0/go.mod h1:bfmNLna1l1CljNX/Utg55YzFylovfmI7sJnvgA3bzKI=
-github.com/go-pdfkit/reader v0.4.2 h1:0/qPShLzdG/roH4i13dwDTHnS7mEBVTaCBGwCZQhOH0=
-github.com/go-pdfkit/reader v0.4.2/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
+github.com/go-pdfkit/reader v0.5.0 h1:DaJ5C6eKXPRG9Cdu+olA/0KLmsQgyHEC1coteQQuBxU=
+github.com/go-pdfkit/reader v0.5.0/go.mod h1:fQFOVfCMUui1AdvD4qhimdyvvNr9KvvJ1S7IuKZjyV8=
