@@ -6,7 +6,7 @@ require (
 	github.com/go-gfx/gfx v0.10.0
 	github.com/go-opentype/fonts v0.9.0
 	github.com/go-opentype/opentype v0.10.0
-	github.com/go-pdfkit/reader v0.4.1
+	github.com/go-pdfkit/reader v0.4.2
 )
 
 require github.com/go-pdfkit/pdffont v0.3.0
