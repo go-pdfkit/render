@@ -2,9 +2,9 @@ package render
 
 import (
 	"errors"
-	"image"
 	"testing"
 
+	"github.com/go-gfx/gfx/raster"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -160,7 +160,7 @@ func TestAJBIG2DecoderThatRefusesTakesTheImageWithIt(t *testing.T) {
 	// answer; drawing the rectangle anyway is not.
 	restore := jbig2Decode
 	defer func() { jbig2Decode = restore }()
-	jbig2Decode = func(data, globals []byte) (image.Image, error) {
+	jbig2Decode = func(data, globals []byte) (*raster.Image, error) {
 		return nil, errors.New("resource budget exceeded")
 	}
 	d := jbig2Page(t, jbig2Ink, 16, 8, nil)
@@ -176,7 +176,7 @@ func TestAJBIG2DecoderThatRefusesTakesTheImageWithIt(t *testing.T) {
 func TestAJBIG2DecoderThatReturnsNothingTakesTheImageWithIt(t *testing.T) {
 	restore := jbig2Decode
 	defer func() { jbig2Decode = restore }()
-	jbig2Decode = func(data, globals []byte) (image.Image, error) { return nil, nil }
+	jbig2Decode = func(data, globals []byte) (*raster.Image, error) { return nil, nil }
 	d := jbig2Page(t, jbig2Ink, 16, 8, nil)
 	img, err := Page(d, 1, Options{Scale: 1})
 	if err != nil {
@@ -195,7 +195,7 @@ func seenGlobals(t *testing.T, parms reader.Object) []byte {
 	defer func() { jbig2Decode = restore }()
 	var got []byte
 	var called bool
-	jbig2Decode = func(data, globals []byte) (image.Image, error) {
+	jbig2Decode = func(data, globals []byte) (*raster.Image, error) {
 		got, called = globals, true
 		return restore(data, globals)
 	}

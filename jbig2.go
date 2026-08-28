@@ -6,10 +6,7 @@
 package render
 
 import (
-	"bytes"
-	"image"
-
-	"github.com/dkrisman/gobig2"
+	"github.com/go-gfx/gfx/codec"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -31,8 +28,7 @@ func (r *renderer) decodeJBIG2(dict reader.Dict, data []byte, w, h int) []byte {
 	if err != nil || img == nil {
 		return nil
 	}
-	b := img.Bounds()
-	if b.Dx() != w || b.Dy() != h {
+	if img.W != w || img.H != h {
 		// The dictionary's size is the one the page's geometry was computed
 		// from. A stream that decodes to another size is not this image.
 		return nil
@@ -44,8 +40,7 @@ func (r *renderer) decodeJBIG2(dict reader.Dict, data []byte, w, h int) []byte {
 	}
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
-			gr, gg, gb, _ := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
-			if (gr*299+gg*587+gb*114)/1000 < 0x8000 {
+			if img.Pix[(y*w+x)*4] < 128 {
 				out[y*rowBytes+x/8] &^= 0x80 >> uint(x%8)
 			}
 		}
@@ -90,14 +85,11 @@ func (r *renderer) globalsFrom(parms reader.Object) []byte {
 // jbig2Decode is a variable so a test can watch what happens when a decoder
 // refuses, which is the case that decides whether the image is drawn wrong or
 // not drawn.
-var jbig2Decode = func(data, globals []byte) (image.Image, error) {
-	d, err := gobig2.NewDecoderEmbedded(bytes.NewReader(data), globals)
-	if err != nil {
-		return nil, err
-	}
-	img, err := d.Decode()
-	if err != nil {
-		return nil, err
-	}
-	return img, nil
-}
+//
+// The decoder is reached through go-gfx/gfx/codec, which is where the fleet
+// keeps its image decoders, rather than named here. It matters more than usual
+// for this one: its resource limits are process-global rather than per-decode,
+// so a library cannot raise them without changing them for everything else in
+// the binary, and it publishes no tagged version. The day it is swapped should
+// be a change in one place.
+var jbig2Decode = codec.DecodeEmbeddedJBIG2
