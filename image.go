@@ -113,6 +113,15 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 	if len(data) == 0 {
 		return nil
 	}
+	if imageFilter == "JBIG2Decode" {
+		// Decoded here rather than in the switch below because a JBIG2 stream
+		// is far more often a stencil than an image, and a stencil never
+		// reaches that switch.
+		if data = r.decodeJBIG2(dict, data, w, h); data == nil {
+			return nil
+		}
+		imageFilter = ""
+	}
 	if mask, ok := reader.ToBool(resolve(r.doc, dict.Get("ImageMask"))); ok && mask {
 		// A stencil is one bit a pixel, so the bytes have to be samples. When
 		// the filter chain stopped at an image format nothing here decodes,
@@ -120,11 +129,11 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 		// noise through the shape of nothing.
 		//
 		// 273 of the image masks in the 1 633 real forms carry an encoded
-		// filter. 236 of them were faxes, which the reader now decodes; the
-		// nine that remain are JBIG2, and until something decodes those the
-		// honest answer is not to draw them. That is the rule the rest of this
-		// function already follows: "the image is not drawn rather than drawn
-		// wrong".
+		// filter. 236 of them were faxes and nine were JBIG2, both of which
+		// are decoded before this point. What is left is a format nothing
+		// here reads, and the honest answer is not to draw it. That is the
+		// rule the rest of this function already follows: "the image is not
+		// drawn rather than drawn wrong".
 		if imageFilter != "" {
 			return nil
 		}
@@ -138,11 +147,11 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 		out = decodeJPEG(data, w, h, r.decodeInverts(dict))
 	case "JPXDecode":
 		out = decodeJPX(data, w, h)
-	default:
-		// A format nothing here can decode: the image is not drawn rather than
-		// drawn wrong.
-		return nil
 	}
+	// No arm ran, or the one that ran could not read its bytes: the image is
+	// not drawn rather than drawn wrong. Every filter the reader hands back
+	// unread has an arm above, so the first of those is a case this cannot
+	// reach today and the check is here for the second.
 	if out == nil {
 		return nil
 	}
@@ -415,8 +424,18 @@ func (r *renderer) applySoftMask(s *sampled, stream *reader.Stream, resources re
 	return true
 }
 
-// applyStencilMask reads a one-bit image whose set pixels are the ones to
-// leave out.
+// applyStencilMask reads a one-bit image that says which parts of this one are
+// painted.
+//
+// A mask sample of 0 means PAINT. The bit and the coverage run opposite ways,
+// which is the whole difficulty: decodeImage returns a stencil whose alpha is
+// set where the sample is 0, so alpha here already means "painted" and what has
+// to be cleared is everything else. Reading the alpha as though it were the
+// sample shows the exact complement of the picture — a scanned page whose text
+// is the only part hidden.
+//
+// Asked which half of a two-colour page a mask of eight 0 bits and eight 1 bits
+// paints, poppler answers the 0 half.
 func (r *renderer) applyStencilMask(s *sampled, stream *reader.Stream, resources reader.Dict) bool {
 	mask := r.decodeImage(stream.Dict, stream.Raw, resources)
 	if mask == nil {
@@ -425,9 +444,7 @@ func (r *renderer) applyStencilMask(s *sampled, stream *reader.Stream, resources
 	for y := 0; y < s.h; y++ {
 		for x := 0; x < s.w; x++ {
 			m := mask.at(x*mask.w/s.w, y*mask.h/s.h)
-			// A stencil mask marks what is hidden, so where it paints, the
-			// image does not.
-			if m.A > 127 {
+			if m.A <= 127 {
 				s.pix[(y*s.w+x)*4+3] = 0
 			}
 		}

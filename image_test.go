@@ -220,9 +220,15 @@ func TestASoftMaskMakesAnImageSeeThrough(t *testing.T) {
 }
 
 func TestAMaskHidesPartOfAnImage(t *testing.T) {
+	// A mask sample of 0 means PAINT, so the half whose bit is 0 is the half
+	// that shows. This test asserted the complement of that, and so did the
+	// code: every explicit mask in the corpus was showing exactly the parts it
+	// was meant to hide. Asked the same question — which half of a
+	// two-colour page a mask of one 0 bit and one 1 bit paints — poppler
+	// answers the 0 half.
 	w := reader.NewWriter("1.7")
 	pagesRef := w.Reserve()
-	// A stencil that covers the left half.
+	// A stencil whose left half is 0 and right half is 1.
 	mask := w.Add(&reader.Stream{Dict: reader.Dict{
 		"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
 		"Width": reader.Integer(2), "Height": reader.Integer(1),
@@ -253,8 +259,8 @@ func TestAMaskHidesPartOfAnImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	img := draw(t, d, Options{})
-	wantWhite(t, img, 5, 10)  // hidden by the mask
-	wantBlack(t, img, 15, 10) // shown
+	wantBlack(t, img, 5, 10)  // sample 0: painted
+	wantWhite(t, img, 15, 10) // sample 1: masked out
 }
 
 func TestAJPEGImage(t *testing.T) {
@@ -482,15 +488,17 @@ func TestAMaskWhoseBytesAreStillEncodedIsNotDrawn(t *testing.T) {
 	// nothing at all.
 	//
 	// 273 of the image masks in the 1 633 real forms carry an encoded filter.
-	// 236 were faxes, which the reader decodes as of go-pdfkit/reader#15; the
-	// nine that remain are JBIG2. Fifty-one first pages of real forms were
-	// showing this noise before either change.
+	// 236 were faxes and nine were JBIG2, and both are decoded before this
+	// point now. What can still arrive encoded is a mask a file gave a
+	// photographic filter, which no amount of decoding turns into one bit a
+	// pixel. Fifty-one first pages of real forms were showing this noise
+	// before any of it was decoded.
 	for _, tc := range []struct {
 		name   string
 		filter reader.Name
 		drawn  bool
 	}{
-		{"a format nothing here decodes", "JBIG2Decode", false},
+		{"a mask given a photographic filter", "DCTDecode", false},
 		{"no filter at all", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

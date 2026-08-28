@@ -16,5 +16,6 @@ require (
 
 require (
 	github.com/ajroetker/go-highway v0.0.4 // indirect
+	github.com/dkrisman/gobig2 v0.0.0-20260513123937-51e39052fde6
 	golang.org/x/sys v0.47.0 // indirect
 )
