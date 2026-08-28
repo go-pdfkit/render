@@ -2,10 +2,8 @@ github.com/ajroetker/go-highway v0.0.4 h1:RDQo+9OhTXI6BFctLo+5gYpHNbb92VYJ0ObnR4
 github.com/ajroetker/go-highway v0.0.4/go.mod h1:C/zYPNSSpOaraejY89FUTZTyQNEhi5+rEbU0LjlqJeU=
 github.com/ajroetker/go-jpeg2000 v0.0.2 h1:ni8brffZrci4Kacx3nM5d92ipmTDfak84KgHYi6IxFw=
 github.com/ajroetker/go-jpeg2000 v0.0.2/go.mod h1:7ld88W47lZy0x8gRQesRGAonDPOpr6ev8rckjCAfbzE=
-github.com/dkrisman/gobig2 v0.0.0-20260513123937-51e39052fde6 h1:hHPgbpPdcaSXtpLb9NMEUJPxsZ0cxGtGHwmvKGI36NA=
-github.com/dkrisman/gobig2 v0.0.0-20260513123937-51e39052fde6/go.mod h1:2Ij0rpAVy1tZ+PQ9FM1jCpnVo/OOCMCD6rLtSp4JkEI=
-github.com/go-gfx/gfx v0.14.0 h1:G6A0ZIirv9XjlxVFOl3HLscLRJOdhe9e1HqiCK5CHz0=
-github.com/go-gfx/gfx v0.14.0/go.mod h1:8KcjwJmHW2ImXcjeMEIQ1bY+7Q2DNcMYoQCl270Isr8=
+github.com/go-gfx/gfx v0.15.0 h1:ol+4uqUTq8s23cGSjfbEHciTxkrZ7kTrpUuAPPz4XuY=
+github.com/go-gfx/gfx v0.15.0/go.mod h1:VAK6hgCgkhT3j3ek2K7G8zDfkCPD3RCF45UbcRlCV8Q=
 github.com/go-opentype/fonts v0.9.0 h1:slB6OB3riLyUPrOxqXe0s6/AzdenF1TDvCN8N87hhQk=
 github.com/go-opentype/fonts v0.9.0/go.mod h1:C6yQL2apHItfEZ5hztpsHF0S5mlX/hklLlq/Z5fRG/g=
 github.com/go-opentype/opentype v0.10.0 h1:cZVMZ3RVkcijXmxlmpqyVkjlNc33aSB2ugKVWYvoLUg=
@@ -18,6 +16,8 @@ github.com/sergeymakinen/go-bmp v1.0.0 h1:SdGTzp9WvCV0A1V0mBeaS7kQAwNLdVJbmHlqNW
 github.com/sergeymakinen/go-bmp v1.0.0/go.mod h1:/mxlAQZRLxSvJFNIEGGLBE/m40f3ZnUifpgVDlcUIEY=
 github.com/sergeymakinen/go-ico v1.0.0 h1:uL3khgvKkY6WfAetA+RqsguClBuu7HpvBB/nq/Jvr80=
 github.com/sergeymakinen/go-ico v1.0.0/go.mod h1:wQ47mTczswBO5F0NoDt7O0IXgnV4Xy3ojrroMQzyhUk=
+github.com/tannevaled/gobig2 v0.1.0 h1:9PdMvmnmYQURlUF40zt8t35Wnrz3KhZrwfxgCMvQc04=
+github.com/tannevaled/gobig2 v0.1.0/go.mod h1:X0S1H+N35kg6zYgVYRqGMsGj3C35zs+iA2r1MXyPcV4=
 golang.org/x/image v0.45.0 h1:FMb1nTbH5H9vF55SriQHgFw5GnNL9Jg6L25BwXKzhB0=
 golang.org/x/image v0.45.0/go.mod h1:n62x/7RqlwXDvGsSU4u6IUTUf6KghUZ9Bt7cG/T9Fx4=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
