@@ -419,13 +419,28 @@ func imageWithMask(t *testing.T, entry reader.Name, maskDict reader.Dict, maskDa
 	return d
 }
 
-func TestAMaskThatCannotBeRead(t *testing.T) {
-	// Neither kind of mask, when it cannot be read, may take the image with
-	// it: the image is drawn as it stands.
+func TestAMaskThatCannotBeReadTakesTheImageWithIt(t *testing.T) {
+	// This reverses what this package used to do, and the corpus is why.
+	//
+	// It used to draw the image as it stood, on the reasoning that an
+	// unreadable mask should not cost you the picture. That is right for a
+	// photograph with a soft edge and catastrophic for a scanned page, which
+	// is a low-resolution colour background with a HIGH-RESOLUTION BITONAL INK
+	// LAYER over it — and that ink layer is a dark rectangle whose shape comes
+	// entirely from a JBIG2 stencil. Drawn without the stencil it is a dark
+	// rectangle over the whole page.
+	//
+	// Measured against poppler over 250 scanned medical documents, the median
+	// page had 97% of its pixels wrong that way. Not drawing it leaves the
+	// background showing, which is what the page mostly is.
 	for _, entry := range []reader.Name{"SMask", "Mask"} {
 		d := imageWithMask(t, entry, reader.Dict{
 			"Width": reader.Integer(0), "Height": reader.Integer(0)}, nil)
-		wantBlack(t, draw(t, d, Options{}), 10, 10)
+		img := draw(t, d, Options{})
+		if !isWhite(img, 10, 10) {
+			t.Errorf("/%s: the image was drawn although how much of it shows "+
+				"is unknown: %s", entry, pixel(img, 10, 10))
+		}
 	}
 }
 

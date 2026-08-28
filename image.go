@@ -146,7 +146,14 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 	if out == nil {
 		return nil
 	}
-	r.applyTransparency(out, dict, resources)
+	if !r.applyTransparency(out, dict, resources) {
+		// A mask was named and could not be read, so how much of this image
+		// shows is unknown. Drawing it whole is the worst of the three
+		// answers: it is how a scanned page's high-resolution ink layer, which
+		// is meant to show through a stencil, ends up painted over the page as
+		// a solid dark rectangle.
+		return nil
+	}
 	return out
 }
 
@@ -374,23 +381,30 @@ func (r *renderer) decodeInverts(dict reader.Dict) bool {
 // applyTransparency reads whichever of the two ways a PDF says which parts of
 // an image are see-through: a soft mask of its own, or a range of colours to
 // treat as absent.
-func (r *renderer) applyTransparency(s *sampled, dict reader.Dict, resources reader.Dict) {
+// It reports whether the image may be drawn. A mask that is NAMED and cannot be
+// READ means how much of the image shows is unknown, and an image drawn whole
+// when most of it was meant to be invisible is worse than one not drawn: that
+// is exactly how a scanned page goes wrong. Such a page is a low-resolution
+// colour background with a high-resolution bitonal ink layer over it, and the
+// ink layer is a dark rectangle masked by a JBIG2 stencil. Without the stencil
+// it is a dark rectangle over the whole page.
+func (r *renderer) applyTransparency(s *sampled, dict reader.Dict, resources reader.Dict) bool {
 	if stream, ok := reader.ToStream(resolve(r.doc, dict.Get("SMask"))); ok {
-		r.applySoftMask(s, stream, resources)
-		return
+		return r.applySoftMask(s, stream, resources)
 	}
 	maskEntry := resolve(r.doc, dict.Get("Mask"))
 	if stream, ok := reader.ToStream(maskEntry); ok {
-		r.applyStencilMask(s, stream, resources)
+		return r.applyStencilMask(s, stream, resources)
 	}
+	return true
 }
 
 // applySoftMask reads a grey image whose levels say how much of each pixel
 // shows.
-func (r *renderer) applySoftMask(s *sampled, stream *reader.Stream, resources reader.Dict) {
+func (r *renderer) applySoftMask(s *sampled, stream *reader.Stream, resources reader.Dict) bool {
 	mask := r.decodeImage(stream.Dict, stream.Raw, resources)
 	if mask == nil {
-		return
+		return false
 	}
 	for y := 0; y < s.h; y++ {
 		for x := 0; x < s.w; x++ {
@@ -398,14 +412,15 @@ func (r *renderer) applySoftMask(s *sampled, stream *reader.Stream, resources re
 			s.pix[(y*s.w+x)*4+3] = m.R
 		}
 	}
+	return true
 }
 
 // applyStencilMask reads a one-bit image whose set pixels are the ones to
 // leave out.
-func (r *renderer) applyStencilMask(s *sampled, stream *reader.Stream, resources reader.Dict) {
+func (r *renderer) applyStencilMask(s *sampled, stream *reader.Stream, resources reader.Dict) bool {
 	mask := r.decodeImage(stream.Dict, stream.Raw, resources)
 	if mask == nil {
-		return
+		return false
 	}
 	for y := 0; y < s.h; y++ {
 		for x := 0; x < s.w; x++ {
@@ -417,6 +432,7 @@ func (r *renderer) applyStencilMask(s *sampled, stream *reader.Stream, resources
 			}
 		}
 	}
+	return true
 }
 
 // intOr reads an integer, or gives a default.
