@@ -40,6 +40,18 @@ type Image struct {
 // mattered here — a release went out drawing scanned pages dark because "ink
 // appeared" was measured instead of "the right ink".
 //
+// What comes back is what each CODEC produced, not what the page draws. A
+// picture that names a mask is returned unmasked, and the mask is returned
+// beside it as its own entry, named for the key that named it. That is what
+// pdfimages does, and it is the only way the two can be compared: applying a
+// mask to one side and not the other made 21 of 22 JPEG 2000 pictures in a
+// corpus of scanned pages look wrong, when 11 of them differed by nothing but
+// the /SMask.
+//
+// It also means a picture whose mask cannot be read still comes back. [Page]
+// declines to draw that one, because how much of it shows is unknown — but the
+// codec read it, and this is about the codec.
+//
 // A picture nothing here can decode is left out rather than returned empty,
 // which is the same answer [Page] gives by not drawing it. Inline images —
 // the ones written into the content stream — are not returned: they belong to
@@ -89,15 +101,39 @@ func (r *renderer) imagesIn(res reader.Dict, depth int) []Image {
 		if sub != "Image" {
 			continue
 		}
-		s := r.decodeImage(st.Dict, st.Raw, res)
-		if s == nil {
-			continue
-		}
+		out = append(out, r.decoded(name, st, res)...)
+	}
+	return out
+}
+
+// decoded reads one image XObject and the mask it names, if any.
+func (r *renderer) decoded(name string, st *reader.Stream, res reader.Dict) []Image {
+	var out []Image
+	if s := r.decodeBase(st.Dict, st.Raw, res); s != nil {
 		stencil, _ := reader.ToBool(resolve(r.doc, st.Dict.Get("ImageMask")))
 		out = append(out, Image{
 			Name:    name,
 			Filter:  imageFilterOf(r.doc, st),
 			Stencil: bool(stencil),
+			Pic:     &raster.Image{W: s.w, H: s.h, Pix: s.pix},
+		})
+	}
+	// A mask is a picture in its own right, stored in its own filter, and it
+	// is very often the one that is wrong: JBIG2 is almost never a page's
+	// content and almost always its mask.
+	for _, key := range []reader.Name{"SMask", "Mask"} {
+		ms, ok := reader.ToStream(resolve(r.doc, st.Dict.Get(key)))
+		if !ok {
+			continue
+		}
+		s := r.decodeBase(ms.Dict, ms.Raw, res)
+		if s == nil {
+			continue
+		}
+		out = append(out, Image{
+			Name:    name + "/" + string(key),
+			Filter:  imageFilterOf(r.doc, ms),
+			Stencil: true,
 			Pic:     &raster.Image{W: s.w, H: s.h, Pix: s.pix},
 		})
 	}

@@ -98,8 +98,34 @@ func unitSquareBounds(m geometry.Matrix, w, h int) image.Rectangle {
 // name a grid it would take the whole machine to hold.
 const maxImagePixels = 64 << 20
 
-// decodeImage turns an image XObject into a grid of colours.
+// decodeImage turns an image XObject into the grid of colours a page draws:
+// the picture the codec read, with whatever mask it names applied to it.
 func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Dict) *sampled {
+	out := r.decodeBase(dict, raw, resources)
+	if out == nil {
+		return nil
+	}
+	if !r.applyTransparency(out, dict, resources) {
+		// A mask was named and could not be read, so how much of this image
+		// shows is unknown. Drawing it whole is the worst of the three
+		// answers: it is how a scanned page's high-resolution ink layer, which
+		// is meant to show through a stencil, ends up painted over the page as
+		// a solid dark rectangle.
+		return nil
+	}
+	return out
+}
+
+// decodeBase is the picture the codec read, with no mask applied.
+//
+// It is separate because the two questions are different. What a page draws
+// is the composited picture; what a codec produced is this one, and comparing
+// a codec against another implementation means comparing THIS, since the other
+// implementation hands its masks back separately too. Measured the wrong way
+// round, 21 of 22 JPEG 2000 pictures in a corpus of scanned pages looked
+// wrong, and 11 of them differed only by an /SMask that had been applied to
+// one side and not the other.
+func (r *renderer) decodeBase(dict reader.Dict, raw []byte, resources reader.Dict) *sampled {
 	w := int(intOr(resolve(r.doc, dict.Get("Width")), 0))
 	h := int(intOr(resolve(r.doc, dict.Get("Height")), 0))
 	if w <= 0 || h <= 0 || w*h > maxImagePixels {
@@ -152,17 +178,6 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 	// not drawn rather than drawn wrong. Every filter the reader hands back
 	// unread has an arm above, so the first of those is a case this cannot
 	// reach today and the check is here for the second.
-	if out == nil {
-		return nil
-	}
-	if !r.applyTransparency(out, dict, resources) {
-		// A mask was named and could not be read, so how much of this image
-		// shows is unknown. Drawing it whole is the worst of the three
-		// answers: it is how a scanned page's high-resolution ink layer, which
-		// is meant to show through a stencil, ends up painted over the page as
-		// a solid dark rectangle.
-		return nil
-	}
 	return out
 }
 
