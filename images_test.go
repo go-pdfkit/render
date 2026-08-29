@@ -331,3 +331,64 @@ func TestAMaskNothingCanDecodeIsLeftOut(t *testing.T) {
 		t.Errorf("a mask of no size came back as a picture: %+v", got)
 	}
 }
+
+func TestAPictureSaysWhetherADecodeArrayShapedIt(t *testing.T) {
+	// A /Decode of [1 0] on a one-bit mask makes this picture and the same
+	// picture as pdfimages EXTRACTS it exact complements of each other: every
+	// pixel differs, and none of it is a disagreement. Whoever compares the
+	// two has to be able to tell that case apart from a real one.
+	for _, tc := range []struct {
+		name  string
+		extra reader.Dict
+		want  bool
+	}{
+		{"no array at all", nil, false},
+		{"an array", reader.Dict{"Decode": reader.Array{reader.Integer(1), reader.Integer(0)}}, true},
+		{"something that is not an array", reader.Dict{"Decode": reader.Integer(1)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dict := reader.Dict{
+				"Width": reader.Integer(2), "Height": reader.Integer(1),
+				"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			}
+			for k, v := range tc.extra {
+				dict[k] = v
+			}
+			d := pageWithImage(t, dict, []byte{0x00, 0xff}, "")
+			got, err := Images(d, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Decoded != tc.want {
+				t.Errorf("got %+v, want Decoded=%v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAMaskSaysSoToo(t *testing.T) {
+	// The mask is where this actually happens: 22 of the 54 JBIG2 soft masks
+	// in a corpus of scanned medical documents carry /Decode [1 0], and not
+	// one of the 194 stencils does.
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		mask := w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			"Decode": reader.Array{reader.Integer(1), reader.Integer(0)},
+		}, Raw: []byte{0x00, 0xff}})
+		return reader.Dict{"XObject": reader.Dict{"I": w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			"SMask": mask,
+		}, Raw: []byte{0x00, 0xff}})}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Decoded || !got[1].Decoded {
+		t.Errorf("got %+v", got)
+	}
+}

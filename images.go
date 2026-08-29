@@ -20,6 +20,14 @@ type Image struct {
 	// JPXDecode, JBIG2Decode, CCITTFaxDecode — and is empty when the bytes
 	// were samples that no image codec had to read.
 	Filter string
+	// Decoded says the dictionary carried a /Decode array, which maps the
+	// stored samples onto the range the colour space wants and is applied
+	// here. It is worth knowing about because it is the one thing that makes
+	// this picture differ from the same picture as another tool EXTRACTS it:
+	// pdfimages writes the samples as stored, so a /Decode of [1 0] on a
+	// one-bit mask makes the two exact complements of each other, and every
+	// pixel differs for a reason that is not a disagreement.
+	Decoded bool
 	// Stencil says the picture is a one-bit mask, which carries no colours of
 	// its own: it paints whatever colour is in force through its own shape.
 	// Its Pic has that shape in the alpha channel and black everywhere else,
@@ -114,6 +122,7 @@ func (r *renderer) decoded(name string, st *reader.Stream, res reader.Dict) []Im
 		out = append(out, Image{
 			Name:    name,
 			Filter:  imageFilterOf(r.doc, st),
+			Decoded: r.hasDecodeArray(st.Dict),
 			Stencil: bool(stencil),
 			Pic:     &raster.Image{W: s.w, H: s.h, Pix: s.pix},
 		})
@@ -133,11 +142,19 @@ func (r *renderer) decoded(name string, st *reader.Stream, res reader.Dict) []Im
 		out = append(out, Image{
 			Name:    name + "/" + string(key),
 			Filter:  imageFilterOf(r.doc, ms),
+			Decoded: r.hasDecodeArray(ms.Dict),
 			Stencil: true,
 			Pic:     &raster.Image{W: s.w, H: s.h, Pix: s.pix},
 		})
 	}
 	return out
+}
+
+// hasDecodeArray says whether a picture's samples were mapped through a
+// /Decode array on the way out.
+func (r *renderer) hasDecodeArray(dict reader.Dict) bool {
+	_, ok := reader.ToArray(resolve(r.doc, dict.Get("Decode")))
+	return ok
 }
 
 // imageFilterOf names the image format a stream's filter chain stopped at, and
