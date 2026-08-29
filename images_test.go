@@ -220,3 +220,114 @@ func TestAPageThatIsNotThereHasNoPictures(t *testing.T) {
 		t.Error("page nine of a one-page document came back without complaint")
 	}
 }
+
+func TestAMaskComesBackBesideThePictureItShapes(t *testing.T) {
+	// A picture that names a mask is returned unmasked, with the mask beside
+	// it. Applying it to one side and not the other made 21 of 22 JPEG 2000
+	// pictures in a corpus of scanned pages look wrong, when 11 of them
+	// differed by nothing but the /SMask.
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		mask := w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+		}, Raw: []byte{0x00, 0x00}})
+		return reader.Dict{"XObject": reader.Dict{"I": w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			"SMask": mask,
+		}, Raw: []byte{0x00, 0xff}})}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("%d pictures, want the picture and its mask", len(got))
+	}
+	// The mask says nothing shows. The picture must come back anyway, opaque:
+	// that is the codec's answer, and the codec is what this is about.
+	if got[0].Name != "I" || got[0].Pic.Pix[3] != 255 {
+		t.Errorf("the picture came back masked: %+v alpha %d", got[0], got[0].Pic.Pix[3])
+	}
+	if got[1].Name != "I/SMask" || !got[1].Stencil {
+		t.Errorf("the mask came back as %+v", got[1])
+	}
+}
+
+func TestAPictureWhoseMaskCannotBeReadStillComesBack(t *testing.T) {
+	// Page declines to draw this one, because how much of it shows is
+	// unknown. The codec read it, and this is about the codec.
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		bad := w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"Filter": reader.Name("JPXDecode"),
+		}, Raw: []byte{0xff, 0x4f, 0xff, 0x51, 0, 1}})
+		return reader.Dict{"XObject": reader.Dict{"I": w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			"SMask": bad,
+		}, Raw: []byte{0x00, 0xff}})}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "I" {
+		t.Fatalf("got %+v", got)
+	}
+	// And the page still refuses to draw it, which is the other half of the
+	// rule and must not have moved.
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ink := inked(img); ink != 0 {
+		t.Errorf("%d pixels drawn from an image whose mask cannot be read", ink)
+	}
+}
+
+func TestAMaskThatIsNotAPictureIsNotOne(t *testing.T) {
+	// /Mask may be an array of colour ranges rather than a stream, which is a
+	// different mechanism and not a picture to hand back.
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		return reader.Dict{"XObject": reader.Dict{"I": w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			"Mask": reader.Array{reader.Integer(0), reader.Integer(0)},
+		}, Raw: []byte{0x00, 0xff}})}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a colour-key mask came back as a picture: %+v", got)
+	}
+}
+
+func TestAMaskNothingCanDecodeIsLeftOut(t *testing.T) {
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		bad := w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(0), "Height": reader.Integer(0),
+		}, Raw: []byte{}})
+		return reader.Dict{"XObject": reader.Dict{"I": w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			"Mask": bad,
+		}, Raw: []byte{0x00, 0xff}})}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a mask of no size came back as a picture: %+v", got)
+	}
+}
