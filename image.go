@@ -2,9 +2,10 @@ package render
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
-	_ "image/jpeg" // the one image format a PDF may carry undecoded
+	"image/jpeg" // the one image format a PDF may carry undecoded
 	"math"
 
 	jpeg2000 "github.com/ajroetker/go-jpeg2000"
@@ -170,9 +171,9 @@ func (r *renderer) decodeBase(dict reader.Dict, raw []byte, resources reader.Dic
 	case "":
 		out = r.samples(dict, data, w, h, resources)
 	case "DCTDecode", "DCT":
-		out = decodeJPEG(data, w, h, r.decodeInverts(dict))
+		out = r.decodeJPEG(data, w, h, r.decodeInverts(dict))
 	case "JPXDecode":
-		out = decodeJPX(data, w, h)
+		out = r.decodeJPX(data, w, h)
 	}
 	// No arm ran, or the one that ran could not read its bytes: the image is
 	// not drawn rather than drawn wrong. Every filter the reader hands back
@@ -297,7 +298,11 @@ func sampleAt(data []byte, rowStart, bitOffset, bpc int) uint32 {
 }
 
 // decodeJPEG reads the one compressed image format a PDF may carry whole.
-func decodeJPEG(data []byte, w, h int, inverted bool) *sampled {
+func (r *renderer) decodeJPEG(data []byte, w, h int, inverted bool) *sampled {
+	cw, ch := jpegSize(data)
+	if !r.affordDecoded(cw, ch, w*h) {
+		return nil
+	}
 	img, err := jpegDecode(data)
 	if err != nil {
 		return nil
@@ -321,7 +326,11 @@ func decodeJPEG(data []byte, w, h int, inverted bool) *sampled {
 // The size is taken from the picture rather than from the dictionary, as it is
 // for JPEG: a codestream carries its own, and where the two disagree the one
 // the pixels are actually in is the one that can be drawn.
-func decodeJPX(data []byte, w, h int) *sampled {
+func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
+	cw, ch := jpxSize(data)
+	if !r.affordDecoded(cw, ch, w*h) {
+		return nil
+	}
 	img, err := jpxDecode(data)
 	if err != nil || img == nil {
 		return nil
@@ -330,6 +339,66 @@ func decodeJPX(data []byte, w, h int) *sampled {
 		w, h = img.W, img.H
 	}
 	return &sampled{w: w, h: h, pix: img.Pix}
+}
+
+// affordDecoded reports whether a picture of cw by ch pixels may be made.
+//
+// A codec carries its own size and it need not be the one the dictionary
+// declares, so the dictionary's is not enough to go on: image/jpeg makes the
+// whole picture the moment it reaches the start of scan, so a 376-byte JPEG
+// whose frame header claims 65 535 by 65 535 allocates four gigabytes and only
+// then says the scan data is missing. Reading the header first costs nothing
+// and allocates nothing, and it is the only place the question can be asked in
+// time.
+//
+// charged is what the dictionary already paid for this picture, since [Images]
+// charges the declared size before it gets here; a codestream claiming more
+// than the dictionary pays the difference. [Page] keeps no picture and is not
+// bounded that way, so its renderer spends nothing and only the ceiling on a
+// single picture applies to it.
+func (r *renderer) affordDecoded(cw, ch, charged int) bool {
+	if cw <= 0 || ch <= 0 {
+		// Nothing could be read from the header, so nothing will be made from
+		// the body either: the decoder gives up before it allocates.
+		return true
+	}
+	if cw > maxImagePixels || ch > maxImagePixels || cw*ch > maxImagePixels {
+		return false
+	}
+	if !r.bounded {
+		return true
+	}
+	extra := cw*ch - charged
+	if extra <= 0 {
+		return true
+	}
+	if extra > r.budget {
+		r.refused = fmt.Errorf("%w: a picture whose codestream holds %d by %d pixels, with %d of the %d pixels left",
+			ErrTooMuchToDecode, cw, ch, r.budget, maxImagesPixels)
+		return false
+	}
+	r.budget -= extra
+	return true
+}
+
+// jpegSize is how large a JPEG says it is, read from its header alone. It is
+// zero when nothing can be read, which is a decoder's problem and not a
+// budget's.
+var jpegSize = func(data []byte) (int, int) {
+	cfg, err := jpeg.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0
+	}
+	return cfg.Width, cfg.Height
+}
+
+// jpxSize is the same question asked of a JPEG 2000 codestream.
+var jpxSize = func(data []byte) (int, int) {
+	cfg, err := jpeg2000.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return 0, 0
+	}
+	return cfg.Width, cfg.Height
 }
 
 // jpxDecode is a variable so a test can watch what happens when a decoder

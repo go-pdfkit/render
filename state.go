@@ -119,6 +119,19 @@ type renderer struct {
 	// is hidden. Marked content does not span streams, so both are saved and
 	// restored around a nested one.
 	mc, hideAt int
+
+	// seen is the XObjects a walk of the resources has already entered, and
+	// budget is how many pixels it may still decode. Both belong to [Images],
+	// which walks the resources itself rather than running a content stream
+	// and so is bounded by neither maxOperations nor the size of the page.
+	seen   map[reader.Ref]bool
+	budget int
+	// bounded says a budget is being kept at all. Page keeps no picture — it
+	// draws each one and lets it go — so only Images spends.
+	bounded bool
+	// refused is why the walk stopped, and is set instead of decoding the
+	// picture that would have gone past the budget.
+	refused error
 }
 
 // timeCheckEvery is how many operations pass between looks at the clock. A
