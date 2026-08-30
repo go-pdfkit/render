@@ -81,6 +81,7 @@ func Images(d *reader.Document, i int) ([]Image, error) {
 		softMasks: map[softMaskKey][]uint8{},
 		seen:      map[reader.Ref]bool{},
 		budget:    maxImagesPixels,
+		bounded:   true,
 	}
 	res, _ := reader.ToDict(resolve(d, page.Get("Resources")))
 	out := r.imagesIn(res, 0)

@@ -6,11 +6,15 @@
 package render
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"strings"
 	"testing"
 
+	"github.com/go-gfx/gfx/raster"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -253,5 +257,187 @@ func TestAStreamWrittenIntoTheDictionaryIsNotRemembered(t *testing.T) {
 	}
 	if r.firstVisit(ref) {
 		t.Error("a reference was entered twice")
+	}
+}
+
+// lyingJPEG is a real, valid JPEG of eight pixels by eight whose frame header
+// has been altered to claim 65 535 by 65 535.
+//
+// It is 376 bytes and it makes image/jpeg allocate four gigabytes: the decoder
+// makes the whole picture the moment it reaches the start of scan, and only
+// then finds the scan data missing. Whatever /Width and /Height the PDF
+// declares is beside the point — the codec believes its own header.
+func lyingJPEG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewGray(image.Rect(0, 0, 8, 8)), nil); err != nil {
+		t.Fatal(err)
+	}
+	data := buf.Bytes()
+	for i := 0; i+8 < len(data); i++ {
+		if data[i] == 0xFF && data[i+1] == 0xC0 {
+			data[i+5], data[i+6] = 0xFF, 0xFF // height
+			data[i+7], data[i+8] = 0xFF, 0xFF // width
+			// The header has to say what it is going to make, or this fixture
+			// proves nothing.
+			cfg, err := jpeg.DecodeConfig(bytes.NewReader(data))
+			if err != nil || cfg.Width != 65535 || cfg.Height != 65535 {
+				t.Fatalf("the patched header reads back as %dx%d, %v", cfg.Width, cfg.Height, err)
+			}
+			return data
+		}
+	}
+	t.Fatal("no frame header to patch")
+	return nil
+}
+
+func TestACodestreamIsNotBelievedBeforeItIsMeasured(t *testing.T) {
+	// The other way a small file names a great deal of memory, and the one
+	// that walks straight past a budget charged on the dictionary: the
+	// dictionary says eight pixels by eight and the codestream says 65 535 by
+	// 65 535, and it is the codestream the decoder allocates for.
+	data := lyingJPEG(t)
+	if len(data) > 1024 {
+		t.Fatalf("the fixture is %d bytes; it is meant to be tiny", len(data))
+	}
+	d := jpegPage(t, data, nil)
+
+	// The decoder must never be reached: it is the decoder that allocates,
+	// and it does so before it discovers there is no scan data. Nothing came
+	// back either way, both before this guard and after it, so what has to be
+	// asserted is that the four gigabytes were never asked for.
+	reached := false
+	was := jpegDecode
+	jpegDecode = func(b []byte) (image.Image, error) {
+		reached = true
+		return was(b)
+	}
+	defer func() { jpegDecode = was }()
+
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Errorf("unexpected error %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("%d pictures came back from a codestream of 4 294 836 225 pixels", len(got))
+	}
+	if reached {
+		t.Error("Images handed the bytes to the decoder anyway")
+	}
+
+	// The page draws nothing rather than allocating four gigabytes for it.
+	// Page keeps no picture and so is not charged, but the ceiling on a single
+	// one applies to it all the same.
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ink := inked(img); ink != 0 {
+		t.Errorf("%d pixels drawn from a codestream nothing may hold", ink)
+	}
+	if reached {
+		t.Error("Page handed the bytes to the decoder anyway")
+	}
+}
+
+func TestWhatACodecSaysItHoldsIsPaidForToo(t *testing.T) {
+	// A ceiling on one picture is not a budget: a page of pictures each
+	// declaring one pixel and each holding a large codestream would come to
+	// as much as it liked. What the codec says it holds is charged for, less
+	// whatever the dictionary already paid.
+	const most = maxImagePixels
+	for _, tc := range []struct {
+		name           string
+		cw, ch         int
+		charged        int
+		budget         int
+		bounded        bool
+		want           bool
+		wantLeft       int
+		wantRefusal    bool
+		wantRefusalHas string
+	}{
+		{name: "a header that says nothing is left to the decoder",
+			cw: 0, ch: 0, budget: 10, bounded: true, want: true, wantLeft: 10},
+		{name: "a height that says nothing is left to the decoder",
+			cw: 4, ch: 0, budget: 10, bounded: true, want: true, wantLeft: 10},
+		{name: "a codestream past the ceiling on one picture",
+			cw: 65535, ch: 65535, budget: most, bounded: true, want: false, wantLeft: most},
+		{name: "a width alone past the ceiling",
+			cw: most + 1, ch: 1, budget: most, bounded: true, want: false, wantLeft: most},
+		{name: "a height alone past the ceiling",
+			cw: 1, ch: most + 1, budget: most, bounded: true, want: false, wantLeft: most},
+		{name: "a page keeps no picture and spends nothing",
+			cw: 100, ch: 100, budget: 0, bounded: false, want: true, wantLeft: 0},
+		{name: "a codestream no larger than the dictionary is already paid for",
+			cw: 10, ch: 10, charged: 100, budget: 5, bounded: true, want: true, wantLeft: 5},
+		{name: "a codestream larger than the dictionary pays the difference",
+			cw: 10, ch: 10, charged: 60, budget: 100, bounded: true, want: true, wantLeft: 60},
+		{name: "and is refused when it cannot",
+			cw: 10, ch: 10, charged: 60, budget: 39, bounded: true, want: false, wantLeft: 39,
+			wantRefusal: true, wantRefusalHas: "39"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &renderer{budget: tc.budget, bounded: tc.bounded}
+			if got := r.affordDecoded(tc.cw, tc.ch, tc.charged); got != tc.want {
+				t.Errorf("a codestream of %d by %d with %d left: %v, want %v",
+					tc.cw, tc.ch, tc.budget, got, tc.want)
+			}
+			if r.budget != tc.wantLeft {
+				t.Errorf("%d pixels left, want %d", r.budget, tc.wantLeft)
+			}
+			switch {
+			case tc.wantRefusal && !errors.Is(r.refused, ErrTooMuchToDecode):
+				t.Errorf("refused with %v", r.refused)
+			case tc.wantRefusal && !strings.Contains(r.refused.Error(), tc.wantRefusalHas):
+				t.Errorf("the refusal %q does not name %s", r.refused, tc.wantRefusalHas)
+			case !tc.wantRefusal && r.refused != nil:
+				t.Errorf("refused with %v when it should not have", r.refused)
+			}
+		})
+	}
+}
+
+func TestACodestreamThatSaysNothingIsLeftToItsDecoder(t *testing.T) {
+	// A header nothing can be read from is a decoder's problem, not a
+	// budget's: it gives up long before it allocates. Both codecs are asked
+	// the same way and both are asked something they cannot read.
+	if w, h := jpegSize([]byte("not a JPEG")); w != 0 || h != 0 {
+		t.Errorf("a JPEG header read out of nothing as %dx%d", w, h)
+	}
+	if w, h := jpxSize([]byte("not a codestream")); w != 0 || h != 0 {
+		t.Errorf("a JPEG 2000 header read out of nothing as %dx%d", w, h)
+	}
+	// And a real one is read.
+	if w, h := jpxSize(jpxImage(t, 6, 4)); w != 6 || h != 4 {
+		t.Errorf("a real codestream of 6x4 read as %dx%d", w, h)
+	}
+}
+
+func TestAJPXCodestreamIsMeasuredBeforeItIsDecoded(t *testing.T) {
+	// The same guard on the other codec. jpxSize is a variable so that a
+	// header claiming more than may be held can be put behind it without
+	// having to encode four gigabytes of picture to say so.
+	wasSize := jpxSize
+	jpxSize = func([]byte) (int, int) { return 100000, 100000 }
+	defer func() { jpxSize = wasSize }()
+	reached := false
+	wasDecode := jpxDecode
+	jpxDecode = func(b []byte) (*raster.Image, error) {
+		reached = true
+		return wasDecode(b)
+	}
+	defer func() { jpxDecode = wasDecode }()
+
+	d := jpxPage(t, jpxImage(t, 6, 4), 6, 4)
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("%d pictures came back from a codestream of ten thousand million pixels", len(got))
+	}
+	if reached {
+		t.Error("the bytes were handed to the decoder anyway")
 	}
 }

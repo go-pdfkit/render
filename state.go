@@ -126,6 +126,9 @@ type renderer struct {
 	// and so is bounded by neither maxOperations nor the size of the page.
 	seen   map[reader.Ref]bool
 	budget int
+	// bounded says a budget is being kept at all. Page keeps no picture — it
+	// draws each one and lets it go — so only Images spends.
+	bounded bool
 	// refused is why the walk stopped, and is set instead of decoding the
 	// picture that would have gone past the budget.
 	refused error
