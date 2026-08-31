@@ -30,7 +30,8 @@ import (
 //   - INTERPOLATE, weighting the nearer chroma sample 3 and the further one 1
 //     in each direction. That is libjpeg's "fancy upsampling", which is on by
 //     default (jdapimin.c:229), and so it is what poppler (DCTStream.cc:98
-//     never touches the flag), pdfium, mupdf and Ghostscript all do.
+//     never touches the flag), pdfium (core/fxcodec/jpeg/jpeg_common.c:29)
+//     and mupdf (source/fitz/filter-dct.c:284) do too.
 //
 // The two are not close. Both were measured against poppler over the whole
 // conformance corpus for go-pdfkit/render#40: replication differs from it by
