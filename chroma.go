@@ -43,9 +43,9 @@ import (
 // It reproduces libjpeg's filter only where libjpeg applies it: 4:2:0, 4:2:2
 // and 4:4:0, and within those only when the chroma plane is more than two
 // samples wide, because below that libjpeg falls back to replication
-// (jdsample.c:503 and :534, "compptr->downsampled_width > 2"). 4:1:1 and 4:1:0
+// (jdsample.c:506 and :534, "compptr->downsampled_width > 2"). 4:1:1 and 4:1:0
 // have no fancy method in libjpeg at all — they go through int_upsample, which
-// replicates (jdsample.c:552) — so they are left alone here too.
+// replicates (jdsample.c:553) — so they are left alone here too.
 func jpegPixels(img image.Image) *raster.Image {
 	yc, ok := img.(*image.YCbCr)
 	if !ok {
