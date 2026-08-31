@@ -312,7 +312,7 @@ func (r *renderer) decodeJPEG(data []byte, w, h int, inverted bool) *sampled {
 	if b.Dx() != w || b.Dy() != h {
 		w, h = b.Dx(), b.Dy()
 	}
-	src := raster.FromImage(img)
+	src := jpegPixels(img)
 	return &sampled{w: w, h: h, pix: src.Pix}
 }
 
