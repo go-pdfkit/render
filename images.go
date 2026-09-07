@@ -8,7 +8,6 @@ package render
 import (
 	"errors"
 	"fmt"
-	"sort"
 
 	"github.com/go-gfx/gfx/raster"
 	"github.com/go-pdfkit/reader"
@@ -64,11 +63,17 @@ type Image struct {
 //
 // A picture nothing here can decode is left out rather than returned empty,
 // which is the same answer [Page] gives by not drawing it. Inline images —
-// the ones written into the content stream — are not returned: they belong to
-// the stream that draws them rather than to the page's resources.
+// the ones written into the content stream with BI — are not returned: they
+// are named by no resource and are objects of nothing, so there is nothing for
+// a tool that extracts a file's objects to hand back beside them.
+//
+// It is the CONTENT STREAM that is walked, not the page's /Resources. A
+// resource dictionary is a catalogue of what a page may draw, and PDF lets
+// every page in a file share one; see [renderer.imagesDrawn] for what walking
+// the catalogue instead did to a measurement.
 //
 // Each picture comes back once, however many of the page's forms reach it, and
-// a page that names more picture than [maxImagesPixels] is refused whole with
+// a page that draws more picture than [maxImagesPixels] is refused whole with
 // [ErrTooMuchToDecode] rather than decoded until the machine gives out.
 func Images(d *reader.Document, i int) ([]Image, error) {
 	page, err := d.Page(i)
@@ -84,7 +89,10 @@ func Images(d *reader.Document, i int) ([]Image, error) {
 		bounded:   true,
 	}
 	res, _ := reader.ToDict(resolve(d, page.Get("Resources")))
-	out := r.imagesIn(res, 0)
+	// The error is dropped for the reason [Page] drops it: it says the page
+	// itself could not be read, and the page was read a few lines above.
+	dec, _ := d.PageContentDecoded(i)
+	out := r.imagesDrawn(dec.Data, res, 0)
 	if r.refused != nil {
 		return nil, r.refused
 	}
@@ -113,51 +121,6 @@ const maxImagesPixels = 256 << 20
 // at once. Nothing comes back with it: half the pictures of a page would be
 // read as the whole of them by anything counting.
 var ErrTooMuchToDecode = errors.New("render: the page names more picture than may be decoded at once")
-
-// imagesIn collects the pictures one resource dictionary reaches, following
-// the forms it names.
-func (r *renderer) imagesIn(res reader.Dict, depth int) []Image {
-	if depth > maxImageDepth {
-		return nil
-	}
-	xo, _ := reader.ToDict(resolve(r.doc, res.Get("XObject")))
-	names := make([]string, 0, len(xo))
-	for name := range xo {
-		names = append(names, string(name))
-	}
-	// A map hands its keys back in a different order every run, and a list of
-	// pictures that reorders itself is not a measurement.
-	sort.Strings(names)
-
-	var out []Image
-	for _, name := range names {
-		entry := xo.Get(reader.Name(name))
-		st, ok := reader.ToStream(resolve(r.doc, entry))
-		if !ok {
-			continue
-		}
-		if !r.firstVisit(entry) {
-			continue
-		}
-		sub, _ := reader.ToName(resolve(r.doc, st.Dict.Get("Subtype")))
-		if sub == "Form" {
-			inner, _ := reader.ToDict(resolve(r.doc, st.Dict.Get("Resources")))
-			out = append(out, r.imagesIn(inner, depth+1)...)
-			if r.refused != nil {
-				return out
-			}
-			continue
-		}
-		if sub != "Image" {
-			continue
-		}
-		out = append(out, r.decoded(name, st, res)...)
-		if r.refused != nil {
-			return out
-		}
-	}
-	return out
-}
 
 // firstVisit reports whether an XObject has not been walked before, and
 // remembers it if not.
@@ -273,4 +236,75 @@ func (r *renderer) hasDecodeArray(dict reader.Dict) bool {
 // is empty when the chain ran to samples.
 func imageFilterOf(d *reader.Document, st *reader.Stream) string {
 	return string(reader.DecodeRecovering(st.Dict, st.Raw, d.Resolver()).Image)
+}
+
+// imagesDrawn collects the pictures a content stream draws, in the order it
+// draws them by, descending into the forms it draws.
+//
+// It replaces a walk over the page's /Resources, which is a catalogue of what
+// the page MAY draw and not a record of what it does. The two are the same
+// thing often enough that the difference went unnoticed, and completely
+// different when a file gives every page one shared resource dictionary — as
+// the French tax forms do. 2044_2044_4764.pdf names ten 118 by 118 Data Matrix
+// barcodes, one per page; its page 1 draws exactly one of them and the walk
+// returned all ten.
+//
+// That is not merely a longer list. Measuring against a judge that extracts
+// what a page DRAWS, the nine extra pictures had nothing to be paired with, and
+// one of them was matched to the drawn barcode's row because they are the same
+// size — so two different barcodes were compared, came out 255 apart, and the
+// one picture that WAS drawn was left unpaired and unmeasured. The extra
+// entries did not dilute the measurement; they replaced it.
+func (r *renderer) imagesDrawn(content []byte, res reader.Dict, depth int) []Image {
+	if depth > maxImageDepth {
+		return nil
+	}
+	xo, _ := reader.ToDict(resolve(r.doc, res.Get("XObject")))
+	// A stream that stops decoding part way is walked as far as it got, which
+	// is what this package draws; the error says nothing the operators do not.
+	ops, _ := reader.Operations(content)
+	var out []Image
+	for _, op := range ops {
+		if op.Operator != "Do" || len(op.Operands) == 0 {
+			continue
+		}
+		name, ok := reader.ToName(op.Operands[len(op.Operands)-1])
+		if !ok {
+			continue
+		}
+		entry := xo.Get(name)
+		st, ok := reader.ToStream(resolve(r.doc, entry))
+		if !ok {
+			continue
+		}
+		if !r.firstVisit(entry) {
+			continue
+		}
+		sub, _ := reader.ToName(resolve(r.doc, st.Dict.Get("Subtype")))
+		if sub == "Form" {
+			// A form with no resources of its own draws against the ones in
+			// force where it was drawn, which is what drawForm does.
+			inner, ok := r.doc.GetDict(st.Dict, "Resources")
+			if !ok {
+				inner = res
+			}
+			c, img, err := r.salvaged(st)
+			if err != nil || img != "" {
+				continue
+			}
+			out = append(out, r.imagesDrawn(c, inner, depth+1)...)
+			if r.refused != nil {
+				return out
+			}
+			continue
+		}
+		if sub != "Image" {
+			continue
+		}
+		out = append(out, r.decoded(string(name), st, res)...)
+		if r.refused != nil {
+			return out
+		}
+	}
+	return out
 }

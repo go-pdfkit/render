@@ -6,6 +6,8 @@
 package render
 
 import (
+	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/go-pdfkit/reader"
@@ -15,13 +17,21 @@ import (
 // caller gives, so a test can put forms, nonsense and pictures side by side.
 func pageWithResources(t *testing.T, build func(w *reader.Writer) reader.Dict) *reader.Document {
 	t.Helper()
+	return pageContent(t, build, draws)
+}
+
+// pageContent is the same, with the content stream the caller's business: a
+// test that means "this is in the resources and is NOT drawn" cannot say it
+// through a builder that draws everything.
+func pageContent(t *testing.T, build func(w *reader.Writer) reader.Dict, body func(reader.Dict) []byte) *reader.Document {
+	t.Helper()
 	w := reader.NewWriter("1.7")
 	pagesRef := w.Reserve()
 	res := build(w)
 	page := w.Add(reader.Dict{
 		"Type": reader.Name("Page"), "Parent": pagesRef,
 		"MediaBox":  reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(20), reader.Integer(20)},
-		"Contents":  w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte("")}),
+		"Contents":  w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: body(res)}),
 		"Resources": res,
 	})
 	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
@@ -45,6 +55,33 @@ func greyImage(w *reader.Writer) reader.Object {
 		"Width": reader.Integer(2), "Height": reader.Integer(1),
 		"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
 	}, Raw: []byte{0x00, 0xff}})
+}
+
+// draws is a content stream that draws every XObject the resources name, which
+// is what these tests mean when they put a picture in a page: [Images] reads
+// what a page DRAWS, and a resource dictionary is a catalogue of what it may.
+// The names are sorted so a map's order cannot decide what a test measures.
+func draws(res reader.Dict) []byte {
+	xo, _ := reader.ToDict(res.Get("XObject"))
+	names := make([]string, 0, len(xo))
+	for name := range xo {
+		names = append(names, string(name))
+	}
+	sort.Strings(names)
+	var out []byte
+	for _, n := range names {
+		out = append(out, "/"+n+" Do\n"...)
+	}
+	return out
+}
+
+// form is a form XObject that draws every picture its own resources name, so
+// a test can put a picture one level down and have the page reach it.
+func form(w *reader.Writer, res reader.Dict) reader.Object {
+	return w.Add(&reader.Stream{Dict: reader.Dict{
+		"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
+		"Resources": res,
+	}, Raw: draws(res)})
 }
 
 func TestThePicturesAPageDrawsComeBackDecoded(t *testing.T) {
@@ -121,10 +158,7 @@ func TestThePicturesInsideAFormAreFound(t *testing.T) {
 	// A form is a page inside a page. pdfimages follows them, and a picture
 	// that is only reachable through one is still a picture the page draws.
 	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
-		inner := w.Add(&reader.Stream{Dict: reader.Dict{
-			"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
-			"Resources": reader.Dict{"XObject": reader.Dict{"Deep": greyImage(w)}},
-		}, Raw: []byte("")})
+		inner := form(w, reader.Dict{"XObject": reader.Dict{"Deep": greyImage(w)}})
 		return reader.Dict{"XObject": reader.Dict{"F": inner, "A": greyImage(w)}}
 	})
 	got, err := Images(d, 1)
@@ -148,11 +182,11 @@ func TestAFormThatHoldsItselfStops(t *testing.T) {
 	// never coming back.
 	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
 		ref := w.Reserve()
+		res := reader.Dict{"XObject": reader.Dict{"Loop": ref, "Pic": greyImage(w)}}
 		w.Put(ref, &reader.Stream{Dict: reader.Dict{
 			"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
-			"Resources": reader.Dict{"XObject": reader.Dict{
-				"Loop": ref, "Pic": greyImage(w)}},
-		}, Raw: []byte("")})
+			"Resources": res,
+		}, Raw: draws(res)})
 		return reader.Dict{"XObject": reader.Dict{"F": ref}}
 	})
 	got, err := Images(d, 1)
@@ -390,5 +424,193 @@ func TestAMaskSaysSoToo(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Decoded || !got[1].Decoded {
 		t.Errorf("got %+v", got)
+	}
+}
+
+// TestAPageReturnsWhatItDrawsNotWhatItsResourcesHold is the shape that made
+// this walk wrong: one resource dictionary shared by every page.
+//
+// A resource dictionary is a catalogue of what a page MAY draw. PDF lets every
+// page in a file share one, and the French tax forms do: 2044_2044_4764.pdf
+// gives all ten of its pages the same dictionary, holding ten 118 by 118 Data
+// Matrix barcodes, one per page. Walking the dictionary handed page 1 all ten.
+//
+// Measured against a judge that extracts what a page draws, the nine extras
+// were not merely noise. One of them was matched to the drawn barcode's row —
+// the two are the same size — so two different barcodes were compared and came
+// out 255 apart, and the barcode the page actually draws was left unmeasured.
+// Corpus-wide, 30 of the 41 structural JPEG disagreements were pairs like that.
+func TestAPageReturnsWhatItDrawsNotWhatItsResourcesHold(t *testing.T) {
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	resRef := w.Reserve()
+	w.Put(resRef, reader.Dict{"XObject": reader.Dict{
+		"A": greyImage(w), "B": greyImage(w)}})
+	page := func(body string) reader.Object {
+		return w.Add(reader.Dict{
+			"Type": reader.Name("Page"), "Parent": pagesRef,
+			"MediaBox":  reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(20), reader.Integer(20)},
+			"Contents":  w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte(body)}),
+			"Resources": resRef,
+		})
+	}
+	first, second := page("/A Do\n"), page("/B Do\n")
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{first, second}, "Count": reader.Integer(2)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		page int
+		want string
+	}{{1, "A"}, {2, "B"}} {
+		got, err := Images(d, tc.page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("page %d: %d pictures, want just the one it draws", tc.page, len(got))
+		}
+		if got[0].Name != tc.want {
+			t.Errorf("page %d drew %q, got %q", tc.page, tc.want, got[0].Name)
+		}
+	}
+}
+
+// TestAFormWithNoResourcesOfItsOwnDrawsAgainstThePage is what drawForm does,
+// and the walk has to agree with it: a form whose dictionary carries no
+// /Resources names its pictures out of the ones in force where it was drawn.
+// Without this the picture is simply not found, and a page that draws fine
+// comes back empty.
+func TestAFormWithNoResourcesOfItsOwnDrawsAgainstThePage(t *testing.T) {
+	d := pageContent(t, func(w *reader.Writer) reader.Dict {
+		bare := w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
+		}, Raw: []byte("/Pic Do\n")})
+		return reader.Dict{"XObject": reader.Dict{"F": bare, "Pic": greyImage(w)}}
+		// The page draws the form and nothing else, so the only way to the
+		// picture is through the form's inherited resources.
+	}, func(reader.Dict) []byte { return []byte("/F Do\n") })
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "Pic" {
+		t.Fatalf("got %d pictures %v, want the one the form drew", len(got), names(got))
+	}
+}
+
+// names is what a failure needs to read to be actionable.
+func names(ims []Image) []string {
+	out := make([]string, 0, len(ims))
+	for _, im := range ims {
+		out = append(out, im.Name)
+	}
+	return out
+}
+
+// TestTheWalkStopsAtTheDepthLimit pins how far a form may hold a form. The
+// self-referring case stops at the first repeat; this one never repeats, so
+// only the bound can stop it.
+func TestTheWalkStopsAtTheDepthLimit(t *testing.T) {
+	const levels = 12
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	// Built from the bottom so each level can name the one below it.
+	var below reader.Object
+	var pageRes reader.Dict
+	for i := levels - 1; i >= 0; i-- {
+		xo := reader.Dict{reader.Name(fmt.Sprintf("Pic%d", i)): greyImage(w)}
+		if below != nil {
+			xo["Next"] = below
+		}
+		res := reader.Dict{"XObject": xo}
+		if i == 0 {
+			pageRes = res
+			break
+		}
+		below = form(w, res)
+	}
+	page := w.Add(reader.Dict{
+		"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox":  reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(20), reader.Integer(20)},
+		"Contents":  w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: draws(pageRes)}),
+		"Resources": pageRes,
+	})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{page}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The page is the first level, and each form below it one more, so the
+	// bound is reached with one picture per level walked.
+	if len(got) != maxImageDepth+1 {
+		t.Fatalf("%d pictures from %d levels, want %d", len(got), levels, maxImageDepth+1)
+	}
+}
+
+// TestADoWithNoNameDrawsNothing is a content stream saying Do about something
+// that is not a resource name. Real files hold these — an operand written
+// wrongly, or one the scanner could not read as a name — and the walk has to
+// step over it rather than take it as a name and find nothing under it.
+func TestADoWithNoNameDrawsNothing(t *testing.T) {
+	d := pageContent(t, func(w *reader.Writer) reader.Dict {
+		return reader.Dict{"XObject": reader.Dict{"Pic": greyImage(w)}}
+	}, func(reader.Dict) []byte { return []byte("Do\n123 Do\n/Pic Do\n") })
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The picture after the two nonsense operators still comes back, which is
+	// what says the walk stepped over them rather than stopped.
+	if len(got) != 1 || got[0].Name != "Pic" {
+		t.Fatalf("got %v, want the one picture drawn by name", names(got))
+	}
+}
+
+// TestAFormThatCannotBeReadIsSteppedOver covers the two ways a form's content
+// does not arrive: no filter would decode it, and it is filtered as an image —
+// a JPEG where operators should be. [drawForm] declines to draw either, and
+// the walk has to decline to descend without giving up on the rest of the page.
+func TestAFormThatCannotBeReadIsSteppedOver(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		filter reader.Name
+	}{
+		{"no filter decodes it", "NoSuchDecode"},
+		{"it is filtered as an image", "DCTDecode"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+				bad := w.Add(&reader.Stream{Dict: reader.Dict{
+					"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
+					"Filter": tc.filter,
+				}, Raw: []byte("not a stream of operators")})
+				return reader.Dict{"XObject": reader.Dict{"F": bad, "Pic": greyImage(w)}}
+			})
+			got, err := Images(d, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Name != "Pic" {
+				t.Fatalf("got %v, want the page's own picture", names(got))
+			}
+		})
 	}
 }
