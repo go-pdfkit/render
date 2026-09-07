@@ -34,6 +34,16 @@ func sharedResourcesPage(t *testing.T, forms, pictures int, pic func(*reader.Wri
 	w := reader.NewWriter("1.7")
 	pagesRef := w.Reserve()
 	resRef := w.Reserve()
+	// Every stream here draws everything the shared dictionary names, which is
+	// what makes the fan-out a fan-out: the walk follows what is DRAWN, so a
+	// form that merely names the dictionary back reaches nothing.
+	var body []byte
+	for i := 0; i < pictures; i++ {
+		body = append(body, fmt.Sprintf("/Im%d Do\n", i)...)
+	}
+	for i := 0; i < forms; i++ {
+		body = append(body, fmt.Sprintf("/Tr%d Do\n", i)...)
+	}
 	xobj := reader.Dict{}
 	for i := 0; i < pictures; i++ {
 		xobj[reader.Name(fmt.Sprintf("Im%d", i))] = pic(w)
@@ -44,13 +54,13 @@ func sharedResourcesPage(t *testing.T, forms, pictures int, pic func(*reader.Wri
 			// The whole of the defect is on this line: the form hands the walk
 			// back the dictionary the walk is already in.
 			"Resources": resRef,
-		}, Raw: []byte("")})
+		}, Raw: body})
 	}
 	w.Put(resRef, reader.Dict{"XObject": xobj})
 	page := w.Add(reader.Dict{
 		"Type": reader.Name("Page"), "Parent": pagesRef,
 		"MediaBox":  reader.Array{reader.Integer(0), reader.Integer(0), reader.Integer(20), reader.Integer(20)},
-		"Contents":  w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte("")}),
+		"Contents":  w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: body}),
 		"Resources": resRef,
 	})
 	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
@@ -181,12 +191,9 @@ func TestARefusalInsideAFormStopsTheWalk(t *testing.T) {
 	// The picture that breaks the budget may be several forms down, and the
 	// walk has to come back up rather than carry on with the next form.
 	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
-		inner := w.Add(&reader.Stream{Dict: reader.Dict{
-			"Type": reader.Name("XObject"), "Subtype": reader.Name("Form"),
-			"Resources": reader.Dict{"XObject": reader.Dict{"Deep": hugePicture(w)}},
-		}, Raw: []byte("")})
+		inner := form(w, reader.Dict{"XObject": reader.Dict{"Deep": hugePicture(w)}})
 		xo := reader.Dict{"F": inner}
-		// Four more of the largest a picture may be, named so they are walked
+		// Four more of the largest a picture may be, named so they are DRAWN
 		// before the form: the budget is gone by the time the form is reached.
 		for i := 0; i < 4; i++ {
 			xo[reader.Name(fmt.Sprintf("A%d", i))] = hugePicture(w)
