@@ -164,3 +164,35 @@ func TestAGreyJPEGIsLeftAlone(t *testing.T) {
 		t.Errorf("a black grey-scale JPEG drew %s", pixel(pic, 4, 4))
 	}
 }
+
+// TestACMYKJPEGIsConvertedLikeEveryOtherCMYK is the inconsistency this closes.
+//
+// A CMYK image written as SAMPLES went through cmykToRGBA and the printing
+// primaries; the same values arriving as a JPEG went through raster.FromImage,
+// which uses the standard library's naive formula. Two paths, two answers, for
+// one set of numbers.
+//
+// Eight DVLA forms carry a YCCK scan of a whole page, and every one of them
+// differed from poppler on 99% of its pixels for that reason alone. Their mean
+// squared error fell by about an order of magnitude when this closed: v112 from
+// 76.1 to 3.9, v888 from 79.4 to 5.7, v317 from 192.1 to 26.0.
+func TestACMYKJPEGIsConvertedLikeEveryOtherCMYK(t *testing.T) {
+	// Cyan and magenta at full strength, which prints a violet-blue rather than
+	// the primary blue. An Adobe JPEG stores its ink turned over, so the
+	// samples written here are the complements of that ink.
+	defer asCMYK(t, color.CMYK{C: 0, M: 0, Y: 255, K: 255})()
+	d := jpegPage(t, []byte("stands in for a JPEG"), nil)
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantColour(t, img, 4, 4, color.RGBA{46, 49, 146, 255}, 3)
+
+	// The same four numbers written as samples have to land in the same place,
+	// which is the whole of the point.
+	d2 := pageWithImage(t, reader.Dict{
+		"Width": reader.Integer(1), "Height": reader.Integer(1),
+		"BitsPerComponent": reader.Integer(8), "ColorSpace": reader.Name("DeviceCMYK"),
+	}, []byte{255, 255, 0, 0}, "")
+	wantColour(t, draw(t, d2, Options{}), 10, 10, color.RGBA{46, 49, 146, 255}, 3)
+}

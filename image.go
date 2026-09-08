@@ -349,6 +349,19 @@ func (r *renderer) decodeJPEG(dict reader.Dict, data []byte, w, h int, resources
 // be a second wrong answer rather than a fix. Left undone deliberately, and it
 // is a defect the day a file needs it.
 func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources reader.Dict, w, h int) *sampled {
+	if cm, ok := img.(*image.CMYK); ok {
+		// A four-component JPEG's samples are ink, and raster.FromImage turns
+		// them into colour with the standard library's naive formula rather
+		// than with the one the rest of this package uses. Eight DVLA forms
+		// carry a YCCK scan of a whole page and every one of them differed
+		// from poppler on 99% of its pixels for that reason alone.
+		//
+		// Only the CONVERSION changes here. Which samples to convert is
+		// already settled above: uninvertAdobeCMYK has read the /Decode array
+		// and turned the ink over or left it, and reading it a second time
+		// would undo that.
+		return cmykPicture(cm, w, h)
+	}
 	g, ok := img.(*image.Gray)
 	if !ok {
 		return nil
@@ -606,4 +619,24 @@ func intOr(o reader.Object, def int64) int64 {
 		return v
 	}
 	return def
+}
+
+// cmykPicture converts a four-component picture the way every other CMYK in
+// this package is converted, which is through the printing primaries.
+func cmykPicture(cm *image.CMYK, w, h int) *sampled {
+	out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
+	b := cm.Bounds()
+	v := make([]float64, 4)
+	for y := 0; y < h; y++ {
+		row := cm.Pix[cm.PixOffset(b.Min.X, b.Min.Y+y):]
+		for x := 0; x < w; x++ {
+			for c := 0; c < 4; c++ {
+				v[c] = float64(row[x*4+c]) / 255
+			}
+			col := cmykToRGBA(v)
+			i := (y*w + x) * 4
+			out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+		}
+	}
+	return out
 }
