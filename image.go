@@ -403,6 +403,23 @@ func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources
 // The size is taken from the picture rather than from the dictionary, as it is
 // for JPEG: a codestream carries its own, and where the two disagree the one
 // the pixels are actually in is the one that can be drawn.
+//
+// ⚠ A FOUR-COMPONENT codestream is drawn wrong, and this is where it happens.
+// go-jpeg2000's convertToRGBA has branches for one, two and "three or more"
+// components (color.go:280), and the last takes the first three as red, green
+// and blue. A JPXDecode picture whose /ColorSpace is DeviceCMYK therefore comes
+// out with cyan as red, magenta as green, yellow as blue and the black plate
+// discarded: gh-pdfbox/JPXTestCMYK.pdf is 1377x443 of that, 255 from poppler's
+// extraction at a mean of -170.
+//
+// It is not fixable here. Unlike [decodeJPEG], which can put image/jpeg's own
+// samples through the colour space the dictionary names, this decoder's public
+// API hands back an image.RGBA and nothing else: the fourth component is gone
+// before render sees it. Closing it means components out of go-jpeg2000, which
+// is a third-party module, or decoding JPEG 2000 here.
+//
+// One picture of the 2598 forms and none of the 682 scans -- scanned pages are
+// grey or RGB. Written down rather than left to be rediscovered.
 func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
 	cw, ch := jpxSize(data)
 	if !r.affordDecoded(cw, ch, w*h) {
