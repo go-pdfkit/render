@@ -112,7 +112,9 @@ func TestAnImageInCMYK(t *testing.T) {
 		"Width": reader.Integer(1), "Height": reader.Integer(1),
 		"BitsPerComponent": reader.Integer(8), "ColorSpace": reader.Name("DeviceCMYK"),
 	}, []byte{255, 255, 0, 0}, "")
-	wantColour(t, draw(t, d, Options{}), 10, 10, imgcolor.RGBA{0, 0, 255, 255}, 12)
+	// Cyan over magenta prints a violet-blue, not the primary blue the naive
+	// algebra gives; poppler draws the same.
+	wantColour(t, draw(t, d, Options{}), 10, 10, imgcolor.RGBA{46, 49, 146, 255}, 12)
 }
 
 func TestAnIndexedImage(t *testing.T) {

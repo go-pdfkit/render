@@ -57,7 +57,7 @@ func rgbToRGBA(v []float64) color.RGBA {
 
 // cmykToRGBA reads four numbers as cyan, magenta, yellow and black.
 func cmykToRGBA(v []float64) color.RGBA {
-	r, g, b := gfxcolor.CMYKToSRGB(gfxcolor.CMYK{
+	r, g, b := gfxcolor.CMYKToSRGBWebCoated(gfxcolor.CMYK{
 		C: clamp01(at(v, 0)), M: clamp01(at(v, 1)),
 		Y: clamp01(at(v, 2)), K: clamp01(at(v, 3)),
 	})

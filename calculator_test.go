@@ -204,9 +204,16 @@ func TestTheTintTransformOfASeparationSpace(t *testing.T) {
 	if white.R != 255 || white.G != 255 || white.B != 255 {
 		t.Errorf("a tint of nothing came out as %v, want white", white)
 	}
+	// A full tint of a Black separation is full key ink, and key ink on paper
+	// is (35,31,32) rather than absolute black. What this test is about is
+	// that the transform ran at all -- that the tint reached the K channel
+	// and not the other three, which is what turned a page yellow.
 	black := s.convert([]float64{1})
-	if black.R != 0 || black.G != 0 || black.B != 0 {
-		t.Errorf("a tint of one came out as %v, want black", black)
+	if black.R > 60 || black.G > 60 || black.B > 60 {
+		t.Errorf("a tint of one came out as %v, want key ink", black)
+	}
+	if black.R != 35 || black.G != 31 || black.B != 32 {
+		t.Errorf("a tint of one came out as %v, want the SWOP key primary", black)
 	}
 }
 

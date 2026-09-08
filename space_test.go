@@ -24,7 +24,9 @@ func TestNamedColourSpaces(t *testing.T) {
 		{"a profile of one component", reader.Array{reader.Name("ICCBased"), nil}, "0 sc", color.RGBA{0, 0, 0, 255}},
 		{"calibrated grey", reader.Array{reader.Name("CalGray"), reader.Dict{}}, "1 sc", color.RGBA{255, 255, 255, 255}},
 		{"calibrated colour", reader.Array{reader.Name("CalRGB"), reader.Dict{}}, "1 0 0 sc", color.RGBA{255, 0, 0, 255}},
-		{"the device spaces by array", reader.Array{reader.Name("DeviceCMYK")}, "0 0 0 1 sc", color.RGBA{0, 0, 0, 255}},
+		// Full key ink on paper, which is not absolute black: (35,31,32) is
+		// the SWOP key primary, and it is what poppler draws for 0 0 0 1 too.
+		{"the device spaces by array", reader.Array{reader.Name("DeviceCMYK")}, "0 0 0 1 sc", color.RGBA{35, 31, 32, 255}},
 		{"lightness and two axes", reader.Array{reader.Name("Lab"), reader.Dict{}}, "50 20 -30 sc", color.RGBA{128, 128, 128, 255}},
 		{"a spot colour at full strength", reader.Array{reader.Name("Separation"), reader.Name("Spot"),
 			reader.Name("DeviceGray"), reader.Dict{}}, "1 sc", color.RGBA{0, 0, 0, 255}},
@@ -59,7 +61,9 @@ func TestAProfileSaysHowManyComponentsItHas(t *testing.T) {
 	}{
 		{1, "0 sc", color.RGBA{0, 0, 0, 255}},
 		{3, "1 0 0 sc", color.RGBA{255, 0, 0, 255}},
-		{4, "1 1 0 0 sc", color.RGBA{0, 0, 255, 255}},
+		// Cyan and magenta together, which prints a violet-blue rather than
+		// the primary blue the naive formula gives.
+		{4, "1 1 0 0 sc", color.RGBA{46, 49, 146, 255}},
 	} {
 		w := reader.NewWriter("1.7")
 		profile := w.Add(&reader.Stream{Dict: reader.Dict{"N": reader.Integer(c.n)}, Raw: []byte("x")})
@@ -173,10 +177,16 @@ func TestSettingASpaceResetsTheColour(t *testing.T) {
 	wantColour(t, draw(t, d, Options{}), 10, 10, color.RGBA{255, 0, 0, 255}, 4)
 }
 
-func TestCMYKStartsAtBlack(t *testing.T) {
-	// The one space whose black is not all zeroes.
-	if got := deviceCMYK.initial(); got.R > 20 || got.G > 20 || got.B > 20 {
-		t.Errorf("CMYK starts at %d,%d,%d", got.R, got.G, got.B)
+func TestCMYKStartsAtFullKeyInk(t *testing.T) {
+	// The one space whose black is not all zeroes: it starts at 0 0 0 1,
+	// which is as dark as ink prints rather than as dark as a screen goes.
+	// (35,31,32) is the SWOP key primary; asserting 0,0,0 here would be
+	// asserting the naive formula rather than the initial colour.
+	if got := deviceCMYK.initial(); got.R > 60 || got.G > 60 || got.B > 60 {
+		t.Errorf("CMYK starts at %d,%d,%d, want ink-black", got.R, got.G, got.B)
+	}
+	if got := deviceCMYK.initial(); got.R == 0 && got.G == 0 && got.B == 0 {
+		t.Errorf("CMYK starts at absolute black, which is the naive model")
 	}
 	if got := deviceRGB.initial(); got.R != 0 || got.G != 0 || got.B != 0 {
 		t.Errorf("RGB starts at %d,%d,%d", got.R, got.G, got.B)
