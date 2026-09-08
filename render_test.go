@@ -150,8 +150,11 @@ func TestColours(t *testing.T) {
 		{"0 1 0 rg 0 0 10 10 re f", color.RGBA{0, 255, 0, 255}},
 		{"0 0 1 rg 0 0 10 10 re f", color.RGBA{0, 0, 255, 255}},
 		{"0 0 0 0 k 0 0 10 10 re f", color.RGBA{255, 255, 255, 255}},
-		{"0 0 0 1 k 0 0 10 10 re f", color.RGBA{0, 0, 0, 255}},
-		{"1 1 0 0 k 0 0 10 10 re f", color.RGBA{0, 0, 255, 255}},
+		// The two CMYK rows are the printing primaries, not the naive
+		// algebra: full key ink is (35,31,32) and cyan over magenta is a
+		// violet-blue. poppler draws both the same way.
+		{"0 0 0 1 k 0 0 10 10 re f", color.RGBA{35, 31, 32, 255}},
+		{"1 1 0 0 k 0 0 10 10 re f", color.RGBA{46, 49, 146, 255}},
 	}
 	for _, c := range cases {
 		d := onePage(t, [4]float64{0, 0, 20, 20}, c.content, nil)
