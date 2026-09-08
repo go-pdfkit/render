@@ -171,7 +171,7 @@ func (r *renderer) decodeBase(dict reader.Dict, raw []byte, resources reader.Dic
 	case "":
 		out = r.samples(dict, data, w, h, resources)
 	case "DCTDecode", "DCT":
-		out = r.decodeJPEG(data, w, h, r.decodeInverts(dict))
+		out = r.decodeJPEG(dict, data, w, h, resources)
 	case "JPXDecode":
 		out = r.decodeJPX(data, w, h)
 	}
@@ -298,7 +298,7 @@ func sampleAt(data []byte, rowStart, bitOffset, bpc int) uint32 {
 }
 
 // decodeJPEG reads the one compressed image format a PDF may carry whole.
-func (r *renderer) decodeJPEG(data []byte, w, h int, inverted bool) *sampled {
+func (r *renderer) decodeJPEG(dict reader.Dict, data []byte, w, h int, resources reader.Dict) *sampled {
 	cw, ch := jpegSize(data)
 	if !r.affordDecoded(cw, ch, w*h) {
 		return nil
@@ -307,13 +307,77 @@ func (r *renderer) decodeJPEG(data []byte, w, h int, inverted bool) *sampled {
 	if err != nil {
 		return nil
 	}
-	img = uninvertAdobeCMYK(img, inverted)
+	img = uninvertAdobeCMYK(img, r.decodeInverts(dict))
 	b := img.Bounds()
 	if b.Dx() != w || b.Dy() != h {
 		w, h = b.Dx(), b.Dy()
 	}
+	if out := r.jpegThroughSpace(dict, img, resources, w, h); out != nil {
+		return out
+	}
 	src := jpegPixels(img)
 	return &sampled{w: w, h: h, pix: src.Pix}
+}
+
+// jpegThroughSpace puts a JPEG's own samples through the colour space the
+// image dictionary names, and reports nil when the codec's output is already
+// the answer.
+//
+// A JPEG carries SAMPLES, not colours. For DeviceRGB, CalRGB, ICCBased and
+// DeviceGray that distinction costs nothing: the numbers a decoder hands back
+// are the numbers those spaces read, and image/jpeg has already done the
+// YCbCr transform every reader does. For a space that TRANSFORMS its samples
+// it costs the whole picture.
+//
+// A Separation's sample is an amount of INK. A tint of nothing is no ink,
+// which is paper — white. Read as a level of grey, nothing is black, so such
+// an image comes out as its own negative. Three French tax forms carry a
+// PANTONE 293 U logo over an ICCBased CMYK alternate and were drawn inverted;
+// a DVLA form carries a DeviceN "Black" over DeviceCMYK whose every pixel was
+// 255 levels from what poppler extracts -- solid black against solid white,
+// the largest disagreement in the corpus.
+//
+// This is what poppler does and it is not an interpretation of it: DCTStream
+// hands GfxImageColorMap the component samples, and the colour map is what
+// turns them into colour. The shortcut here was correct for every space but
+// the ones that are not device spaces.
+//
+// Only ONE-component JPEGs are put through, which is every such picture in the
+// corpus: 5 of the 2598 forms, and none of the 682 scans. A DeviceN of three
+// or four tints would need the samples BEFORE the YCbCr transform image/jpeg
+// applies to a three-component file, and taking its RGB output as tints would
+// be a second wrong answer rather than a fix. Left undone deliberately, and it
+// is a defect the day a file needs it.
+func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources reader.Dict, w, h int) *sampled {
+	g, ok := img.(*image.Gray)
+	if !ok {
+		return nil
+	}
+	sp := r.colourSpace(dict.Get("ColorSpace"), resources, 0)
+	switch sp.name {
+	case "Separation", "DeviceN", "Indexed", "Lab":
+	default:
+		return nil
+	}
+	if sp.components != 1 {
+		return nil
+	}
+	// The same reading `samples` gives packed samples, over the one plane a
+	// grey JPEG has: a /Decode array still applies, and an Indexed space's
+	// samples are row numbers rather than fractions.
+	decode := r.decodeArray(dict, sp, 8)
+	out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
+	comps := make([]float64, 1)
+	b := img.Bounds()
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			comps[0] = decode(0, uint32(g.GrayAt(b.Min.X+x, b.Min.Y+y).Y), 8)
+			col := sp.convert(comps)
+			i := (y*w + x) * 4
+			out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+		}
+	}
+	return out
 }
 
 // decodeJPX reads a JPEG 2000 image, which is what a scanned page is stored in.
