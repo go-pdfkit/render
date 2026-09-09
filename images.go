@@ -17,6 +17,25 @@ import (
 type Image struct {
 	// Name is the resource name the page draws it by.
 	Name string
+	// Object is the number of the indirect object the picture was stored in,
+	// and nought when it has none: an inline image, or a stream written
+	// directly into the resource dictionary rather than referred to.
+	//
+	// It is here because it is the one identity a picture and another tool's
+	// extraction of it can be matched on, and this is the only place that
+	// knows it without guessing. A caller left with the NAME has to walk the
+	// document again to recover it, and a name is not an identity: it is
+	// unique within one resource dictionary and not across the several a page
+	// reaches through its forms, so `Im1` can mean two different objects on
+	// one page. go-pdfkit/conformance rebuilt this number that way and needed
+	// three mechanisms to do it -- a walk, an ambiguity rule for names that
+	// reached two objects, and a mapping from a mask to the picture that names
+	// it -- and each of the three produced a defect.
+	//
+	// A MASK carries the object of the picture that NAMES it, not its own.
+	// That is what pdfimages publishes on an smask row, and it is the number a
+	// mask can actually be paired on.
+	Object int
 	// Filter is the image format the picture was stored in — DCTDecode,
 	// JPXDecode, JBIG2Decode, CCITTFaxDecode — and is empty when the bytes
 	// were samples that no image codec had to read.
@@ -184,7 +203,7 @@ func (r *renderer) afford(dict reader.Dict) bool {
 }
 
 // decoded reads one image XObject and the mask it names, if any.
-func (r *renderer) decoded(name string, st *reader.Stream, res reader.Dict) []Image {
+func (r *renderer) decoded(name string, object int, st *reader.Stream, res reader.Dict) []Image {
 	var out []Image
 	if !r.afford(st.Dict) {
 		return nil
@@ -193,6 +212,7 @@ func (r *renderer) decoded(name string, st *reader.Stream, res reader.Dict) []Im
 		stencil, _ := reader.ToBool(resolve(r.doc, st.Dict.Get("ImageMask")))
 		out = append(out, Image{
 			Name:    name,
+			Object:  object,
 			Filter:  imageFilterOf(r.doc, st),
 			Decoded: r.hasDecodeArray(st.Dict),
 			Stencil: bool(stencil),
@@ -215,7 +235,11 @@ func (r *renderer) decoded(name string, st *reader.Stream, res reader.Dict) []Im
 			continue
 		}
 		out = append(out, Image{
-			Name:    name + "/" + string(key),
+			Name: name + "/" + string(key),
+			// The PARENT's object, deliberately: a mask is listed under the
+			// number of the picture that names it, and its own is of no use to
+			// anybody trying to pair it.
+			Object:  object,
 			Filter:  imageFilterOf(r.doc, ms),
 			Decoded: r.hasDecodeArray(ms.Dict),
 			Stencil: true,
@@ -301,7 +325,11 @@ func (r *renderer) imagesDrawn(content []byte, res reader.Dict, depth int) []Ima
 		if sub != "Image" {
 			continue
 		}
-		out = append(out, r.decoded(string(name), st, res)...)
+		object := 0
+		if ref, ok := entry.(reader.Ref); ok {
+			object = ref.Num
+		}
+		out = append(out, r.decoded(string(name), object, st, res)...)
 		if r.refused != nil {
 			return out
 		}

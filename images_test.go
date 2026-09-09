@@ -614,3 +614,79 @@ func TestAFormThatCannotBeReadIsSteppedOver(t *testing.T) {
 		})
 	}
 }
+
+// TestAPictureCarriesTheObjectItWasStoredIn is the identity a caller needs and
+// could not get without walking the document a second time.
+//
+// A name is not an identity: it is unique within ONE resource dictionary and
+// not across the several a page reaches through its forms, so `Im1` can mean two
+// different objects on one page. go-pdfkit/conformance rebuilt this number that
+// way and needed three mechanisms to do it — a walk, an ambiguity rule, and a
+// mapping from a mask to the picture that names it — and each of the three
+// produced a defect.
+func TestAPictureCarriesTheObjectItWasStoredIn(t *testing.T) {
+	var pic reader.Object
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		pic = greyImage(w)
+		return reader.Dict{"XObject": reader.Dict{"I": pic}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, ok := pic.(reader.Ref)
+	if !ok {
+		t.Fatalf("the fixture did not store the picture indirectly: %T", pic)
+	}
+	if len(got) != 1 || got[0].Object != ref.Num {
+		t.Fatalf("got %+v, want object %d", got, ref.Num)
+	}
+}
+
+// TestAMaskCarriesItsParentsObject is the trap, and it is the easier number to
+// reach by mistake: both are in scope where the entry is built.
+//
+// pdfimages lists a mask under the object of the picture that NAMES it — the
+// smask row of cerfa_10074.pdf's 2x2 picture 119 says 119, not the mask's own
+// 120 — so the parent's number is the only one a mask can be paired on.
+func TestAMaskCarriesItsParentsObject(t *testing.T) {
+	var parent, mask reader.Object
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		mask = greyImage(w)
+		parent = w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(2), "Height": reader.Integer(1),
+			"ColorSpace": reader.Name("DeviceGray"), "BitsPerComponent": reader.Integer(8),
+			"SMask": mask,
+		}, Raw: []byte{0x00, 0xff}})
+		return reader.Dict{"XObject": reader.Dict{"I": parent}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pref, _ := parent.(reader.Ref)
+	mref, _ := mask.(reader.Ref)
+	if pref.Num == mref.Num {
+		t.Fatalf("the fixture gave both the same object number, so this proves nothing")
+	}
+	var seen int
+	for _, im := range got {
+		switch im.Name {
+		case "I":
+			if im.Object != pref.Num {
+				t.Errorf("the picture carries object %d, want %d", im.Object, pref.Num)
+			}
+			seen++
+		case "I/SMask":
+			if im.Object != pref.Num {
+				t.Errorf("the mask carries object %d, want its PARENT's %d (its own is %d)",
+					im.Object, pref.Num, mref.Num)
+			}
+			seen++
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("got %v, want the picture and its mask", names(got))
+	}
+}
