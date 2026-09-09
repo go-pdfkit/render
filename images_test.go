@@ -690,3 +690,45 @@ func TestAMaskCarriesItsParentsObject(t *testing.T) {
 		t.Fatalf("got %v, want the picture and its mask", names(got))
 	}
 }
+
+// TestAFormNestedPictureCarriesItsOwnObject is the case that made the number
+// worth handing back at all.
+//
+// A picture one form down is looked up in the FORM's resource dictionary, not
+// the page's, so its name lives in a different scope. That is exactly why a
+// name is not an identity — go-pdfkit/conformance had to carry an ambiguity
+// rule for names that reached two objects — and it is the case a walk of the
+// page's own resources gets wrong most easily.
+func TestAFormNestedPictureCarriesItsOwnObject(t *testing.T) {
+	var deep, shallow reader.Object
+	d := pageWithResources(t, func(w *reader.Writer) reader.Dict {
+		deep = greyImage(w)
+		inner := form(w, reader.Dict{"XObject": reader.Dict{"Same": deep}})
+		shallow = greyImage(w)
+		// The SAME name in two scopes, which is what a walk cannot resolve and
+		// what this number makes moot.
+		return reader.Dict{"XObject": reader.Dict{"F": inner, "Same": shallow}}
+	})
+	got, err := Images(d, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dref, _ := deep.(reader.Ref)
+	sref, _ := shallow.(reader.Ref)
+	if dref.Num == sref.Num {
+		t.Fatalf("the fixture gave both the same object, so this proves nothing")
+	}
+	// Each picture comes back once, whichever name reached it first, and the
+	// object says WHICH picture it is where the name cannot.
+	seen := map[int]bool{}
+	for _, im := range got {
+		seen[im.Object] = true
+		if im.Object != dref.Num && im.Object != sref.Num {
+			t.Errorf("%q carries object %d, which is neither picture (%d, %d)",
+				im.Name, im.Object, dref.Num, sref.Num)
+		}
+	}
+	if !seen[dref.Num] {
+		t.Errorf("the picture inside the form was not identified: got %v", got)
+	}
+}
