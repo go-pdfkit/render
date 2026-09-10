@@ -362,35 +362,66 @@ func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources
 		// would undo that.
 		return cmykPicture(cm, w, h)
 	}
-	g, ok := img.(*image.Gray)
-	if !ok {
+	sp := r.colourSpace(dict.Get("ColorSpace"), resources, 0)
+	if passesSamplesThrough(sp) {
 		return nil
 	}
-	sp := r.colourSpace(dict.Get("ColorSpace"), resources, 0)
-	switch sp.name {
-	case "Separation", "DeviceN", "Indexed", "Lab":
+	// The same reading `samples` gives packed samples: a /Decode array still
+	// applies, and an Indexed space's samples are row numbers rather than
+	// fractions.
+	decode := r.decodeArray(dict, sp, 8)
+	out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
+	comps := make([]float64, sp.components)
+	switch {
+	case sp.components == 1:
+		g, ok := img.(*image.Gray)
+		if !ok {
+			return nil
+		}
+		b := img.Bounds()
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				comps[0] = decode(0, uint32(g.GrayAt(b.Min.X+x, b.Min.Y+y).Y), 8)
+				col := sp.convert(comps)
+				i := (y*w + x) * 4
+				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+			}
+		}
+	case sp.components == 3:
+		// A three-component JPEG's samples are the space's three components,
+		// and the decoder has already turned the stored YCbCr back into them:
+		// that conversion is the JPEG's own, not the colour space's, and it
+		// runs first. What is left is to ask the space what the three numbers
+		// mean, which for a calibrated space is a gamma, a matrix and an
+		// adaptation rather than nothing at all.
+		src := jpegPixels(img)
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				i := (y*w + x) * 4
+				for c := 0; c < 3; c++ {
+					comps[c] = decode(c, uint32(src.Pix[i+c]), 8)
+				}
+				col := sp.convert(comps)
+				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+			}
+		}
 	default:
 		return nil
 	}
-	if sp.components != 1 {
-		return nil
-	}
-	// The same reading `samples` gives packed samples, over the one plane a
-	// grey JPEG has: a /Decode array still applies, and an Indexed space's
-	// samples are row numbers rather than fractions.
-	decode := r.decodeArray(dict, sp, 8)
-	out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
-	comps := make([]float64, 1)
-	b := img.Bounds()
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			comps[0] = decode(0, uint32(g.GrayAt(b.Min.X+x, b.Min.Y+y).Y), 8)
-			col := sp.convert(comps)
-			i := (y*w + x) * 4
-			out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
-		}
-	}
 	return out
+}
+
+// passesSamplesThrough reports a space that reads a picture's decoded samples
+// as colour directly, so putting them through it would give back what went in.
+//
+// The four device spaces are package-level singletons and every path that
+// yields one yields the same pointer -- byComponents for an ICCBased profile
+// this package does not interpret, deviceSpace for a bare name -- so identity
+// is the whole test. A calibrated space is NOT one of them even though it
+// carries the same number of components under a similar name, which is the
+// distinction this function exists to draw.
+func passesSamplesThrough(sp *space) bool {
+	return sp == deviceGray || sp == deviceRGB || sp == deviceCMYK || sp == patternSpace
 }
 
 // decodeJPX reads a JPEG 2000 image, which is what a scanned page is stored in.
