@@ -129,9 +129,9 @@ func (r *renderer) colourSpaceArray(family reader.Name, arr reader.Array, resour
 		}
 		return deviceRGB
 	case "CalRGB":
-		return deviceRGB
+		return r.calRGBSpace(arr)
 	case "CalGray":
-		return deviceGray
+		return r.calGraySpace(arr)
 	case "Lab":
 		return labSpace()
 	case "Indexed":
