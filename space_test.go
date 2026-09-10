@@ -27,7 +27,12 @@ func TestNamedColourSpaces(t *testing.T) {
 		// Full key ink on paper, which is not absolute black: (35,31,32) is
 		// the SWOP key primary, and it is what poppler draws for 0 0 0 1 too.
 		{"the device spaces by array", reader.Array{reader.Name("DeviceCMYK")}, "0 0 0 1 sc", color.RGBA{35, 31, 32, 255}},
-		{"lightness and two axes", reader.Array{reader.Name("Lab"), reader.Dict{}}, "50 20 -30 sc", color.RGBA{128, 128, 128, 255}},
+		// A positive a* is toward magenta and a negative b* toward blue, so
+		// this is a mid purple and NOT the grey of the same lightness the old
+		// stand-in drew. The value is poppler's: a one-pixel Lab image of
+		// exactly this colour, in a space with no /WhitePoint just as here,
+		// comes out of pdfimages as (131, 109, 171).
+		{"lightness and two axes", reader.Array{reader.Name("Lab"), reader.Dict{}}, "50 20 -30 sc", color.RGBA{131, 109, 171, 255}},
 		{"a spot colour at full strength", reader.Array{reader.Name("Separation"), reader.Name("Spot"),
 			reader.Name("DeviceGray"), reader.Dict{}}, "1 sc", color.RGBA{0, 0, 0, 255}},
 		{"a spot colour at none", reader.Array{reader.Name("Separation"), reader.Name("Spot"),

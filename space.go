@@ -25,6 +25,10 @@ type space struct {
 	// under, for a Pattern space, is the space an uncoloured pattern's own
 	// colour is given in.
 	under *space
+	// labRange, for a Lab space, is the range of its two opponent axes. It is
+	// kept because an image with no /Decode array of its own decodes against
+	// it; see decodeArray.
+	labRange *[4]float64
 }
 
 // The device spaces, which every file may use without saying anything first.
@@ -133,7 +137,7 @@ func (r *renderer) colourSpaceArray(family reader.Name, arr reader.Array, resour
 	case "CalGray":
 		return r.calGraySpace(arr)
 	case "Lab":
-		return labSpace()
+		return r.labSpace(arr)
 	case "Indexed":
 		return r.indexedSpace(arr, resources, depth)
 	case "Separation", "DeviceN":
@@ -177,16 +181,6 @@ func byComponents(n int) *space {
 		return deviceCMYK
 	}
 	return deviceRGB
-}
-
-// labSpace reads three numbers as lightness and two opponent axes. Only the
-// lightness is used, which is a grey of the right weight rather than the right
-// colour — enough not to lose the mark, and honest about what it is.
-func labSpace() *space {
-	return &space{name: "Lab", components: 3, convert: func(v []float64) color.RGBA {
-		g := byteOf(at(v, 0) / 100)
-		return color.RGBA{R: g, G: g, B: g, A: 255}
-	}}
 }
 
 // indexedSpace reads one number as a row of a table of colours.
