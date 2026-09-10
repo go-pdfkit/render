@@ -256,12 +256,11 @@ func (r *renderer) decodeArray(dict reader.Dict, sp *space, bpc int) func(c int,
 			// Lab is the one space whose default decode is not [0 1] per
 			// component: lightness runs to 100 and the two opponent axes over
 			// the space's own /Range.
+			// Three components, and the caller only ever asks for one of
+			// them: decodeArray is called with the space's own count.
 			lo := [3]float64{0, sp.labRange[0], sp.labRange[2]}
 			hi := [3]float64{100, sp.labRange[1], sp.labRange[3]}
 			return func(c int, raw uint32, _ int) float64 {
-				if c < 0 || c > 2 {
-					return float64(raw) / maxValue
-				}
 				return lo[c] + float64(raw)*(hi[c]-lo[c])/maxValue
 			}
 		}
