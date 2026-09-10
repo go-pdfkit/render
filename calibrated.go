@@ -6,16 +6,18 @@ import (
 	"image/color"
 )
 
-// This file reads the two calibrated spaces: CalGray and CalRGB. Each
+// This file reads the three CIE-based spaces: CalGray, CalRGB and Lab. Each
 // says what colour its numbers name by giving a white point and a rule for
-// reaching CIE XYZ, so neither is its device namesake and neither can be read
-// by passing its numbers through.
+// reaching CIE XYZ, so none of them is its device namesake and none can be
+// read by passing its numbers through.
 //
-// Lab is the third CIE space and is NOT here. poppler's GfxLabColorSpace does
-// not multiply by the white point where ISO 32000-2 8.6.5.4 says to
-// (X = Xw*g(M)), so a correct Lab and the judge this repository measures
-// against would disagree for a reason that is not ours. That wants an
-// experiment of its own before either is changed.
+// Lab is the third and is here too. It was left out at first on the strength
+// of a misreading: GfxLabColorSpace::getXYZ does not multiply by the white
+// point where ISO 32000-2 8.6.5.4 says to, which looked like poppler
+// disagreeing with the format. It does not -- ::getRGB multiplies immediately
+// after calling it. A four-pixel Lab document run through pdfimages settles
+// it: the specification's formula matches 4 of 4 pixels within one level, and
+// the no-white-point formula is 13 levels out on a neutral mid tone.
 //
 // The arithmetic lives in gfx/color; what is here is reading a dictionary and
 // carrying its defaults.
@@ -95,6 +97,43 @@ func (r *renderer) calRGBSpace(arr reader.Array) *space {
 	}
 	return &space{name: "CalRGB", components: 3, convert: func(v []float64) color.RGBA {
 		red, green, blue := gfxcolor.CalRGBToSRGB(s, at(v, 0), at(v, 1), at(v, 2))
+		return color.RGBA{R: byteOf(red), G: byteOf(green), B: byteOf(blue), A: 255}
+	}}
+}
+
+// labRangeDefault is the default /Range: the two opponent axes run from -100
+// to 100 unless the space narrows them. Lightness is always 0 to 100 and is
+// not part of /Range.
+var labRangeDefault = [4]float64{-100, 100, -100, 100}
+
+// labSpace reads a Lab space: a white point and the range of its two opponent
+// axes.
+//
+// The range is carried on the space because an image decodes against it. Lab
+// is the one space in the format whose default /Decode is not [0 1] per
+// component: it is [0 100 amin amax bmin bmax], so an image that gives no
+// /Decode of its own would otherwise have its lightness read as a hundredth of
+// what it says.
+func (r *renderer) labSpace(arr reader.Array) *space {
+	d := r.calDict(arr)
+	white, ok := r.calWhitePoint(d)
+	if !ok {
+		// Lab has no device namesake to fall back to, so unlike CalGray and
+		// CalRGB there is nothing to decline into. (1, 1, 1) is the equal-
+		// energy point, which makes the white-point multiplication the
+		// identity -- the most conservative reading of a file that said
+		// nothing -- and it is also what GfxLabColorSpace's constructor uses
+		// when /WhitePoint is missing, so a malformed file is read the same
+		// way by both.
+		white = gfxcolor.WhitePoint{X: 1, Y: 1, Z: 1}
+	}
+	rng := labRangeDefault
+	if v, ok := r.calFloats(d, "Range", 4); ok && v[0] <= v[1] && v[2] <= v[3] {
+		copy(rng[:], v)
+	}
+	return &space{name: "Lab", components: 3, labRange: &rng, convert: func(v []float64) color.RGBA {
+		red, green, blue := gfxcolor.LabToSRGBWP(
+			gfxcolor.Lab{L: at(v, 0), A: at(v, 1), B: at(v, 2)}, white)
 		return color.RGBA{R: byteOf(red), G: byteOf(green), B: byteOf(blue), A: 255}
 	}}
 }

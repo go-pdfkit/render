@@ -303,3 +303,103 @@ func TestACalibratedSpaceArrayWithNoDictionaryAtAll(t *testing.T) {
 		}
 	}
 }
+
+// labImage draws a 1x1 Lab image of one sample triple through the given space
+// array and returns the pixel. Lab is the one space whose samples do not
+// decode over [0, 1], so an image is the only way to exercise that.
+func labImage(t *testing.T, spaceArr reader.Object, decode reader.Object, samples []byte) color.RGBA {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	dict := reader.Dict{
+		"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+		"Width": reader.Integer(1), "Height": reader.Integer(1),
+		"ColorSpace": spaceArr, "BitsPerComponent": reader.Integer(8)}
+	if decode != nil {
+		dict["Decode"] = decode
+	}
+	img := w.Add(&reader.Stream{Dict: dict, Raw: samples})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox":  nums(0, 0, 1, 1),
+		"Resources": reader.Dict{"XObject": reader.Dict{"I": img}},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: []byte("q 1 0 0 1 0 0 cm /I Do Q")})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pic, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, g, b, a := pic.At(0, 0).RGBA()
+	return color.RGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: uint8(a >> 8)}
+}
+
+func TestALabImageWithNoDecodeArrayUsesLabsOwnDefault(t *testing.T) {
+	// Lab is the one space in the format whose default /Decode is not [0 1]
+	// per component: it is [0 100 amin amax bmin bmax]. Without that, a
+	// lightness of 50 would be read as 0.5 and the picture would be black.
+	space := reader.Array{reader.Name("Lab"), reader.Dict{"WhitePoint": d65}}
+	// 0x80 0x99 0x59 decodes to L=50.2, a=20.0, b=-30.2 under the default.
+	samples := []byte{0x80, 0x99, 0x59}
+	implied := labImage(t, space, nil, samples)
+	spelled := labImage(t, space, nums(0, 100, -100, 100, -100, 100), samples)
+	if implied != spelled {
+		t.Errorf("the implied default (%v) and the same array written out (%v) differ", implied, spelled)
+	}
+	if implied.R < 100 || implied.B < 100 {
+		t.Errorf("a mid-lightness Lab sample came out as %v; the decode was read over [0, 1]", implied)
+	}
+}
+
+func TestALabSpaceNarrowsItsAxesWithRange(t *testing.T) {
+	// /Range moves what a sample means, so the same bytes name a different
+	// colour. A malformed range -- a maximum below its minimum -- is not a
+	// narrower space, it is a file that got it wrong, and the default stands.
+	wide := reader.Array{reader.Name("Lab"), reader.Dict{"WhitePoint": d65}}
+	narrow := reader.Array{reader.Name("Lab"),
+		reader.Dict{"WhitePoint": d65, "Range": nums(-20, 20, -20, 20)}}
+	backwards := reader.Array{reader.Name("Lab"),
+		reader.Dict{"WhitePoint": d65, "Range": nums(20, -20, -20, 20)}}
+	samples := []byte{0x80, 0xff, 0x00}
+	a, b, c := labImage(t, wide, nil, samples), labImage(t, narrow, nil, samples), labImage(t, backwards, nil, samples)
+	if a == b {
+		t.Errorf("narrowing /Range changed nothing: %v", a)
+	}
+	if c != a {
+		t.Errorf("a backwards /Range was used (%v); the default should stand (%v)", c, a)
+	}
+}
+
+func TestALabSpaceWithoutAWhitePointUsesTheEqualEnergyPoint(t *testing.T) {
+	// Lab has no device namesake to decline into. (1, 1, 1) makes the
+	// white-point multiplication the identity and is what poppler's own
+	// constructor uses, so a malformed file reads the same way in both.
+	// poppler draws Lab(50, 20, -30) in such a space as (131, 109, 171).
+	got := labImage(t, reader.Array{reader.Name("Lab"), reader.Dict{}}, nil, []byte{0x80, 0x99, 0x59})
+	for i, pair := range [][2]uint8{{got.R, 131}, {got.G, 109}, {got.B, 171}} {
+		if d := int(pair[0]) - int(pair[1]); d > 2 || d < -2 {
+			t.Errorf("channel %d = %d, poppler says %d", i, pair[0], pair[1])
+		}
+	}
+}
+
+func TestADecodeArrayWithSomethingThatIsNotANumber(t *testing.T) {
+	// A /Decode entry that is a name rather than a number: the array cannot be
+	// read, so the samples fall back to fractions of their range.
+	space := reader.Array{reader.Name("Lab"), reader.Dict{"WhitePoint": d65}}
+	bad := reader.Array{reader.Real(0), reader.Real(100), reader.Real(-100), reader.Real(100),
+		reader.Real(-100), reader.Name("oops")}
+	got := labImage(t, space, bad, []byte{0x80, 0x99, 0x59})
+	if got.A != 255 {
+		t.Errorf("a malformed /Decode dropped the picture: %v", got)
+	}
+}
