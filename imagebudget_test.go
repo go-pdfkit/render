@@ -14,7 +14,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-gfx/gfx/raster"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -430,7 +429,7 @@ func TestAJPXCodestreamIsMeasuredBeforeItIsDecoded(t *testing.T) {
 	defer func() { jpxSize = wasSize }()
 	reached := false
 	wasDecode := jpxDecode
-	jpxDecode = func(b []byte) (*raster.Image, error) {
+	jpxDecode = func(b []byte) (image.Image, error) {
 		reached = true
 		return wasDecode(b)
 	}
