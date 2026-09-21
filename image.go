@@ -8,9 +8,9 @@ import (
 	"image/jpeg" // the one image format a PDF may carry undecoded
 	"math"
 
-	jpeg2000 "github.com/ajroetker/go-jpeg2000"
 	"github.com/go-gfx/gfx/geometry"
 	"github.com/go-gfx/gfx/raster"
+	jpeg2000 "github.com/go-images/jpeg2000"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -447,22 +447,20 @@ func passesSamplesThrough(sp *space) bool {
 // for JPEG: a codestream carries its own, and where the two disagree the one
 // the pixels are actually in is the one that can be drawn.
 //
-// ⚠ A FOUR-COMPONENT codestream is drawn wrong, and this is where it happens.
-// go-jpeg2000's convertToRGBA has branches for one, two and "three or more"
-// components (color.go:280), and the last takes the first three as red, green
-// and blue. A JPXDecode picture whose /ColorSpace is DeviceCMYK therefore comes
-// out with cyan as red, magenta as green, yellow as blue and the black plate
-// discarded: gh-pdfbox/JPXTestCMYK.pdf is 1377x443 of that, 255 from poppler's
-// extraction at a mean of -170.
+// A FOUR-COMPONENT codestream used to be drawn wrong here, and the note that
+// said so called it unfixable. It said the decoder's public API hands back an
+// image.RGBA and nothing else, so the black plate was gone before render saw
+// it, and that closing the gap meant components out of a third-party module.
 //
-// It is not fixable here. Unlike [decodeJPEG], which can put image/jpeg's own
-// samples through the colour space the dictionary names, this decoder's public
-// API hands back an image.RGBA and nothing else: the fourth component is gone
-// before render sees it. Closing it means components out of go-jpeg2000, which
-// is a third-party module, or decoding JPEG 2000 here.
+// That was true of the module we depended on and false as a conclusion: the
+// module could be forked. github.com/go-images/jpeg2000 is that fork, and it
+// reads a picture whose own JP2 header declares the enumerated colour space
+// CMYK as an image.CMYK. gh-pdfbox/JPXTestCMYK.pdf, 1377x443, went from 255
+// levels from poppler on every pixel to at most 2 over 2 440 044 samples.
 //
-// One picture of the 2598 forms and none of the 682 scans -- scanned pages are
-// grey or RGB. Written down rather than left to be rediscovered.
+// What is left here is the second half of the same lesson the CMYK JPEG path
+// taught: a picture that arrives as ink must reach colour through the printing
+// primaries, not through raster.FromImage's (1-c)(1-k).
 func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
 	cw, ch := jpxSize(data)
 	if !r.affordDecoded(cw, ch, w*h) {
@@ -472,10 +470,19 @@ func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
 	if err != nil || img == nil {
 		return nil
 	}
-	if img.W != w || img.H != h {
-		w, h = img.W, img.H
+	b := img.Bounds()
+	if b.Dx() != w || b.Dy() != h {
+		w, h = b.Dx(), b.Dy()
 	}
-	return &sampled{w: w, h: h, pix: img.Pix}
+	// A JPEG 2000 picture whose own JP2 header declares CMYK comes back as
+	// ink, and ink reaches colour through the printing primaries rather than
+	// through (1-c)(1-k). It is the same distinction the CMYK JPEG path drew:
+	// that one went through raster.FromImage and answered differently from
+	// every other CMYK picture in the package.
+	if cm, ok := img.(*image.CMYK); ok {
+		return cmykPicture(cm, w, h)
+	}
+	return &sampled{w: w, h: h, pix: raster.FromImage(img).Pix}
 }
 
 // affordDecoded reports whether a picture of cw by ch pixels may be made.
@@ -540,12 +547,13 @@ var jpxSize = func(data []byte) (int, int) {
 
 // jpxDecode is a variable so a test can watch what happens when a decoder
 // refuses what it is given.
-var jpxDecode = func(data []byte) (*raster.Image, error) {
-	img, err := jpeg2000.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil, err
-	}
-	return raster.FromImage(img), nil
+//
+// It hands back the decoded image rather than a raster, because what the
+// image IS decides how its numbers become colour: raster.FromImage reads an
+// *image.CMYK with the standard library's naive formula, which is not the one
+// the rest of this package uses. decodeJPX asks.
+var jpxDecode = func(data []byte) (image.Image, error) {
+	return jpeg2000.Decode(bytes.NewReader(data))
 }
 
 // jpegDecode is a variable so a test can watch what happens when a decoder
