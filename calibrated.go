@@ -137,3 +137,45 @@ func (r *renderer) labSpace(arr reader.Array) *space {
 		return color.RGBA{R: byteOf(red), G: byteOf(green), B: byteOf(blue), A: 255}
 	}}
 }
+
+// iccSpace reads an ICCBased space's profile, and returns a space that
+// converts through it -- or nil, which means the profile is one this package
+// declines and the caller should fall back on the component count.
+//
+// Most of the profiles a document carries are a tone curve per channel and a
+// matrix to the connection space, which is arithmetic and nothing more. A
+// profile whose transform is a lookup table is a different thing and needs an
+// engine; gfx/color says so rather than approximating it, and so do we.
+//
+// The alternative -- what this did before -- is to read the samples as though
+// they were sRGB. On the one picture of the corpus that measures it, a
+// gamma-1.8 RGB profile, that is 19 levels from poppler at worst and only
+// 35.75% of channels within one; through the profile it is 1 and 100%.
+func (r *renderer) iccSpace(st *reader.Stream, n int) *space {
+	data, img, err := r.salvaged(st)
+	if err != nil || img != "" || len(data) == 0 {
+		return nil
+	}
+	profile, err := gfxcolor.ReadICC(data)
+	if err != nil {
+		return nil
+	}
+	// /N is what the rest of the file was written against, so a profile that
+	// disagrees with it is not the one to trust.
+	if p, ok := profile.(*gfxcolor.ICCMatrixTRC); ok && (n == 0 || n == 3) {
+		return &space{name: "ICCBased", components: 3, convert: func(v []float64) color.RGBA {
+			red, green, blue := p.ToSRGB(at(v, 0), at(v, 1), at(v, 2))
+			return color.RGBA{R: byteOf(red), G: byteOf(green), B: byteOf(blue), A: 255}
+		}}
+	}
+	// The second assertion carries the refusals as well: a profile gfx/color
+	// grew a third kind of, and a grey one the file says has three channels.
+	p, ok := profile.(*gfxcolor.ICCGrayTRC)
+	if !ok || (n != 0 && n != 1) {
+		return nil
+	}
+	return &space{name: "ICCBased", components: 1, convert: func(v []float64) color.RGBA {
+		red, green, blue := p.ToSRGB(at(v, 0))
+		return color.RGBA{R: byteOf(red), G: byteOf(green), B: byteOf(blue), A: 255}
+	}}
+}

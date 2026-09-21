@@ -121,12 +121,16 @@ func (r *renderer) colourSpace(o reader.Object, resources reader.Dict, depth int
 func (r *renderer) colourSpaceArray(family reader.Name, arr reader.Array, resources reader.Dict, depth int) *space {
 	switch family {
 	case "ICCBased":
-		// The profile is not interpreted; how many components it has is what
-		// decides how its numbers are read, which is what the specification
-		// says to fall back on.
+		// The profile is READ where it is arithmetic, and where it is not, how
+		// many components it has decides how its numbers are read -- which is
+		// what the specification says to fall back on.
 		if len(arr) > 1 {
-			if s, ok := reader.ToStream(resolve(r.doc, arr[1])); ok {
-				if n, ok := reader.ToInt(resolve(r.doc, s.Dict.Get("N"))); ok {
+			if st, ok := reader.ToStream(resolve(r.doc, arr[1])); ok {
+				n, _ := reader.ToInt(resolve(r.doc, st.Dict.Get("N")))
+				if sp := r.iccSpace(st, int(n)); sp != nil {
+					return sp
+				}
+				if n > 0 {
 					return byComponents(int(n))
 				}
 			}
