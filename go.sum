@@ -1,7 +1,7 @@
 github.com/ajroetker/go-highway v0.0.4 h1:RDQo+9OhTXI6BFctLo+5gYpHNbb92VYJ0ObnR4l6xAQ=
 github.com/ajroetker/go-highway v0.0.4/go.mod h1:C/zYPNSSpOaraejY89FUTZTyQNEhi5+rEbU0LjlqJeU=
-github.com/go-gfx/gfx v0.25.0 h1:AYOe/UNNhJuahWNEXeMx/fI5dJNa8qBX8x43uoH02A8=
-github.com/go-gfx/gfx v0.25.0/go.mod h1:AySK9I+Z6L2kKVhCg7jmsWsGM2lDRmdAJV2gagvKgH8=
+github.com/go-gfx/gfx v0.26.0 h1:/o44PtlRTNhcIJzOPrQZ9yanEfLl49VsYe1fW8q+SQY=
+github.com/go-gfx/gfx v0.26.0/go.mod h1:AySK9I+Z6L2kKVhCg7jmsWsGM2lDRmdAJV2gagvKgH8=
 github.com/go-images/jpeg2000 v0.1.0 h1:SiFAZ6NGvGLU+VmxKji74RiSQDeK6TyjUZr1wjlxRzY=
 github.com/go-images/jpeg2000 v0.1.0/go.mod h1:MwSmrbiP6RK7eLphoNyzY60BAXWOD+8LVdBYDPIBrN4=
 github.com/go-opentype/fonts v0.9.0 h1:slB6OB3riLyUPrOxqXe0s6/AzdenF1TDvCN8N87hhQk=
