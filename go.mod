@@ -13,6 +13,7 @@ require github.com/go-pdfkit/pdffont v0.3.1
 
 require (
 	github.com/ajroetker/go-highway v0.0.4 // indirect
+	github.com/go-images/jpeg v0.1.0
 	github.com/go-images/jpeg2000 v0.1.0
 	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/sergeymakinen/go-ico v1.0.0 // indirect

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/jpeg" // the one image format a PDF may carry undecoded
 	"math"
 
 	"github.com/go-gfx/gfx/geometry"
 	"github.com/go-gfx/gfx/raster"
+	jpeg "github.com/go-images/jpeg"
 	jpeg2000 "github.com/go-images/jpeg2000"
 	"github.com/go-pdfkit/reader"
 )
@@ -558,9 +558,19 @@ var jpxDecode = func(data []byte) (image.Image, error) {
 
 // jpegDecode is a variable so a test can watch what happens when a decoder
 // refuses what it is given.
+//
+// It names the decoder rather than going through image.Decode's registry,
+// because which decoder runs is the point. go-images/jpeg is Go's own
+// image/jpeg with one change: a FOUR-component picture's chroma is upsampled
+// the way libjpeg does rather than by repeating each sample. The standard
+// library merges those four planes itself and hands back an *image.CMYK, so a
+// caller cannot put that right afterwards -- the planes are gone. On the
+// corpus's 258x258 YCCK picture it is worth 36 levels to 2 on the cyan plate.
+//
+// A /DCTDecode stream is a JPEG by definition, so there is nothing for a
+// registry to sniff.
 var jpegDecode = func(data []byte) (image.Image, error) {
-	img, _, err := image.Decode(bytes.NewReader(data))
-	return img, err
+	return jpeg.Decode(bytes.NewReader(data))
 }
 
 // uninvertAdobeCMYK turns a four-component JPEG's ink over.
