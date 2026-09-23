@@ -68,6 +68,84 @@ func appleRGBProfile() []byte {
 	})
 }
 
+// iccLutTag writes an mft2 lookup table, which is the shape a profile carries
+// when no matrix would do. The grid holds two points per axis, so a table of
+// four inks is the sixteen corners of the ink cube.
+func iccLutTag(inputs int, at func(p []int) [3]float64) []byte {
+	d := make([]byte, 52)
+	copy(d, "mft2")
+	d[8], d[9], d[10] = byte(inputs), 3, 2
+	for i := range 3 {
+		binary.BigEndian.PutUint32(d[12+i*16:], 0x00010000)
+	}
+	binary.BigEndian.PutUint16(d[48:], 2)
+	binary.BigEndian.PutUint16(d[50:], 2)
+	put := func(v float64) {
+		var u [2]byte
+		binary.BigEndian.PutUint16(u[:], uint16(math.Round(math.Max(0, math.Min(1, v))*65535)))
+		d = append(d, u[:]...)
+	}
+	ramp := func() { put(0); put(1) }
+	for range inputs {
+		ramp()
+	}
+	p := make([]int, inputs)
+	var walk func(int)
+	walk = func(k int) {
+		if k == inputs {
+			for _, v := range at(p) {
+				put(v)
+			}
+			return
+		}
+		for p[k] = range 2 {
+			walk(k + 1)
+		}
+	}
+	walk(0)
+	for range 3 {
+		ramp()
+	}
+	return d
+}
+
+// pressProfile is the shape of a press: four inks and a lookup table. A real
+// one -- Coated FOGRA39, which is what fr-impots' PANTONE tint is drawn over
+// -- is 650 kB of measured grid. This one is made up and is read by exactly
+// the same code: no ink is paper, every ink is black, and the connection
+// space is the one the profile's header names.
+func pressProfile() []byte {
+	return iccProfile("CMYK", [][2]any{{"A2B1", iccLutTag(4, func(p []int) [3]float64 {
+		ink := 0.0
+		for _, v := range p {
+			ink += float64(v) / 4
+		}
+		// Halved, because this encoding reads 0x8000 as 1.0.
+		f := (1 - ink) / 2
+		return [3]float64{0.96422 * f, 1.0 * f, 0.82521 * f}
+	})}})
+}
+
+// TestAPressProfileIsReadThroughItsLookupTable. A CMYK profile's transform is
+// a table, and reading it is the difference between drawing the document's own
+// ink and drawing an approximation of it.
+func TestAPressProfileIsReadThroughItsLookupTable(t *testing.T) {
+	s := iccSpaceOf(t, pressProfile(), 4)
+	if s.name != "ICCBased" || s.components != 4 {
+		t.Fatalf("space = %q with %d components, want ICCBased with 4", s.name, s.components)
+	}
+	if got := s.convert([]float64{0, 0, 0, 0}); got.R < 250 || got.G < 250 || got.B < 250 {
+		t.Errorf("no ink drew %v, want paper", got)
+	}
+	if got := s.convert([]float64{1, 1, 1, 1}); got.R > 5 || got.G > 5 || got.B > 5 {
+		t.Errorf("every ink drew %v, want black", got)
+	}
+	// A profile that names its own channel count is read with no /N at all.
+	if s := iccSpaceOf(t, pressProfile(), 0); s.components != 4 {
+		t.Errorf("with no /N the space has %d components, want the profile's 4", s.components)
+	}
+}
+
 // iccSpaceOf builds the [/ICCBased <stream>] array a file writes and resolves
 // it the way a page would.
 func iccSpaceOf(t *testing.T, profile []byte, n int) *space {
@@ -151,9 +229,14 @@ func TestAProfileThatNeedsAnEngineFallsBackToTheComponentCount(t *testing.T) {
 		want    *space
 		args    []float64
 	}{
-		"a lookup-table transform": {
+		"a lookup table with nothing in it": {
 			iccProfile("CMYK", [][2]any{{"A2B0", iccOpaqueTag("mft2", 64)}}), 4,
 			deviceCMYK, []float64{0, 0, 0, 1}},
+		"a lookup table in a shape gfx does not read": {
+			iccProfile("CMYK", [][2]any{{"A2B0", iccOpaqueTag("mAB ", 64)}}), 4,
+			deviceCMYK, []float64{0, 0, 0, 1}},
+		"a press profile where /N says three": {pressProfile(), 3,
+			deviceRGB, []float64{0.5, 0.25, 0.75}},
 		"a parametric curve": {
 			iccProfile("RGB ", [][2]any{
 				{"rXYZ", iccXYZTag(0.4, 0.2, 0)}, {"gXYZ", iccXYZTag(0.3, 0.7, 0.1)},

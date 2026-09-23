@@ -168,8 +168,32 @@ func (r *renderer) iccSpace(st *reader.Stream, n int) *space {
 			return color.RGBA{R: byteOf(red), G: byteOf(green), B: byteOf(blue), A: 255}
 		}}
 	}
+	// A lookup-table profile names its own channel count -- 4 for a press
+	// profile, which is the shape /N cannot be guessed from -- so that is
+	// what /N is checked against.
+	//
+	// The intent is media-relative colorimetric because that is what poppler
+	// asks little-cms for when the state names none, and what PDF means by
+	// /RelativeColorimetric. Nothing here reads the state's intent yet; when
+	// something does, this is the argument to pass it to.
+	//
+	// The conversion compensates for the profile's black because poppler
+	// builds every one of its transforms with that flag set. On the picture
+	// that measures it, a PANTONE tint over Coated FOGRA39, the table alone
+	// is 3.15 levels from poppler at worst and the compensation takes it to
+	// 0.97 -- the same two figures little-cms itself gives.
+	if p, ok := profile.(*gfxcolor.ICCLutProfile); ok && (n == 0 || n == p.Inputs) {
+		return &space{name: "ICCBased", components: p.Inputs, convert: func(v []float64) color.RGBA {
+			in := make([]float64, p.Inputs)
+			for i := range in {
+				in[i] = at(v, i)
+			}
+			red, green, blue := p.ToSRGBCompensated(gfxcolor.ICCRelativeColorimetric, in)
+			return color.RGBA{R: byteOf(red), G: byteOf(green), B: byteOf(blue), A: 255}
+		}}
+	}
 	// The second assertion carries the refusals as well: a profile gfx/color
-	// grew a third kind of, and a grey one the file says has three channels.
+	// grew a fourth kind of, and a grey one the file says has three channels.
 	p, ok := profile.(*gfxcolor.ICCGrayTRC)
 	if !ok || (n != 0 && n != 1) {
 		return nil
