@@ -146,6 +146,43 @@ func TestAPressProfileIsReadThroughItsLookupTable(t *testing.T) {
 	}
 }
 
+// iccParaTag writes a parametricCurveType: a tone curve as a formula.
+func iccParaTag(shape int, params ...float64) []byte {
+	d := make([]byte, 12+len(params)*4)
+	copy(d, "para")
+	binary.BigEndian.PutUint16(d[8:], uint16(shape))
+	for i, v := range params {
+		binary.BigEndian.PutUint32(d[12+i*4:], uint32(int32(math.Round(v*65536))))
+	}
+	return d
+}
+
+// TestACurveWrittenAsAFormulaIsDrawnThroughIt. The profile that made this
+// worth doing is Display P3 -- sRGB's transfer function as shape 3 over DCI-P3
+// primaries -- and drawing its samples as sRGB instead was up to 101 levels
+// out. Here the curve is sRGB's exactly and the colorants are sRGB's exactly,
+// so the profile is sRGB and a sample must come back as ITSELF.
+func TestACurveWrittenAsAFormulaIsDrawnThroughIt(t *testing.T) {
+	srgb := iccParaTag(3, 2.4, 1/1.055, 0.055/1.055, 1/12.92, 0.04045)
+	s := iccSpaceOf(t, iccProfile("RGB ", [][2]any{
+		{"rXYZ", iccXYZTag(0.436066, 0.222488, 0.013916)},
+		{"gXYZ", iccXYZTag(0.385147, 0.716873, 0.097076)},
+		{"bXYZ", iccXYZTag(0.143066, 0.060608, 0.714096)},
+		{"rTRC", srgb}, {"gTRC", srgb}, {"bTRC", srgb},
+	}), 3)
+	if s.name != "ICCBased" {
+		t.Fatalf("space = %q, want ICCBased: the formula was declined", s.name)
+	}
+	for _, in := range [][3]int{{0, 0, 0}, {64, 128, 192}, {255, 255, 255}, {200, 30, 90}} {
+		got := s.convert([]float64{float64(in[0]) / 255, float64(in[1]) / 255, float64(in[2]) / 255})
+		for i, v := range []uint8{got.R, got.G, got.B} {
+			if d := int(v) - in[i]; d < -1 || d > 1 {
+				t.Errorf("%v came back as %v: component %d is %d out", in, got, i, d)
+			}
+		}
+	}
+}
+
 // iccSpaceOf builds the [/ICCBased <stream>] array a file writes and resolves
 // it the way a page would.
 func iccSpaceOf(t *testing.T, profile []byte, n int) *space {
@@ -237,12 +274,12 @@ func TestAProfileThatNeedsAnEngineFallsBackToTheComponentCount(t *testing.T) {
 			deviceCMYK, []float64{0, 0, 0, 1}},
 		"a press profile where /N says three": {pressProfile(), 3,
 			deviceRGB, []float64{0.5, 0.25, 0.75}},
-		"a parametric curve": {
+		"a parametric curve of a shape ICC does not define": {
 			iccProfile("RGB ", [][2]any{
 				{"rXYZ", iccXYZTag(0.4, 0.2, 0)}, {"gXYZ", iccXYZTag(0.3, 0.7, 0.1)},
 				{"bXYZ", iccXYZTag(0.2, 0.1, 0.7)},
-				{"rTRC", iccOpaqueTag("para", 8)}, {"gTRC", iccOpaqueTag("para", 8)},
-				{"bTRC", iccOpaqueTag("para", 8)}}), 3,
+				{"rTRC", iccParaTag(9, 1)}, {"gTRC", iccParaTag(9, 1)},
+				{"bTRC", iccParaTag(9, 1)}}), 3,
 			deviceRGB, []float64{0.5, 0.25, 0.75}},
 		"bytes that are not a profile": {[]byte("not an ICC profile at all"), 3,
 			deviceRGB, []float64{0.5, 0.25, 0.75}},
