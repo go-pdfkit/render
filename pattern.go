@@ -165,6 +165,26 @@ func (r *renderer) drawShading(g *gstate, operands []reader.Object, resources re
 	r.paintShading(g, sh, g.ctm, cov, ox, oy, w, h, g.fillAlpha)
 }
 
+// paintCoverage puts a rasterised shape on the page in the colour in force --
+// or, when that colour is a PATTERN, by running the pattern's own content
+// through the shape.
+//
+// It is one function because it is one rule: a pattern IS a colour, so every
+// place that paints with a colour has to honour it. Written out at each call
+// site instead, it was honoured when filling a path and forgotten when filling
+// a glyph, so a tiling pattern set as the text colour drew solid grey letters
+// where poppler drew patterned ones -- 31% of the pixels of the page that
+// measures it.
+func (r *renderer) paintCoverage(g *gstate, p *pattern, cov []float64, ox, oy, w, h int, c color.RGBA, alpha float64, resources reader.Dict) {
+	if p != nil {
+		// The rasteriser hands back its own scratch, which running a
+		// pattern's content would write over.
+		r.fillWithPattern(g, p, append([]float64{}, cov...), ox, oy, w, h, alpha, resources)
+		return
+	}
+	r.paint(g, cov, ox, oy, w, h, c, alpha)
+}
+
 // fillWithPattern paints a coverage grid with a pattern rather than a colour.
 func (r *renderer) fillWithPattern(g *gstate, p *pattern, cov []float64, ox, oy, w, h int, alpha float64, resources reader.Dict) {
 	// A pattern is placed in the page's own space, not in whatever transform
@@ -226,6 +246,22 @@ func (r *renderer) tile(g *gstate, p *pattern, m geometry.Matrix, cov []float64,
 	inner.fill, inner.stroke = color.RGBA{A: 255}, color.RGBA{A: 255}
 	inner.fillSpace, inner.strokeSpace = deviceGray, deviceGray
 	inner.fillPattern, inner.strokePattern = nil, nil
+	// A pattern's content runs in the DEFAULT graphics state, not in the one
+	// that used it (8.7.3.1: "the graphics state shall be initialised to its
+	// default values" -- the transform and what it is drawn through
+	// excepted). The colour above is that rule already; the text state is the
+	// same rule and was missing.
+	//
+	// What it costs: a page that sets `2 Tr` -- fill AND stroke -- before
+	// drawing text through a pattern had every glyph of the PATTERN stroked
+	// as well, in a colour the pattern never set. Measured on the page that
+	// draws an X and an O through a tiling pattern of red letters: 1349
+	// glyphs painted red and 1372 painted black over them, and the page came
+	// out with no red in it at all where poppler drew 4% of its pixels red.
+	inner.text = textState{}
+	inner.lineWidth, inner.miterLimit = 1, 10
+	inner.lineCap, inner.lineJoin = 0, 0
+	inner.dash, inner.dashPhase = nil, 0
 	if p.uncoloured {
 		inner.fill, inner.stroke = p.colour, p.colour
 		inner.fillSpace, inner.strokeSpace = deviceRGB, deviceRGB
