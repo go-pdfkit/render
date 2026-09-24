@@ -315,3 +315,85 @@ func TestAPatternInsideAFormIsPlacedInTheFormsSpace(t *testing.T) {
 	wantColour(t, img, 52, 30, color.RGBA{R: 242, B: 12, A: 255}, 24)
 	wantColour(t, img, 87, 30, color.RGBA{R: 12, B: 242, A: 255}, 24)
 }
+
+// helvetica is the simplest font a test can name: one of the fourteen every
+// reader carries, so no programme has to be built to draw with it.
+func helvetica(w *reader.Writer) reader.Object {
+	return w.Add(reader.Dict{"Type": reader.Name("Font"),
+		"Subtype": reader.Name("Type1"), "BaseFont": reader.Name("Helvetica")})
+}
+
+// TestATilingPatternFillingText. A pattern is a COLOUR, so it fills a glyph
+// exactly as it fills a path. Filling a path honoured it and filling a glyph
+// did not, which on the page that measures it drew solid letters where poppler
+// drew patterned ones -- 31% of the page's pixels.
+func TestATilingPatternFillingText(t *testing.T) {
+	d := shadedPage(t, "/Pattern cs /P1 scn BT /F1 90 Tf 5 20 Td (H) Tj ET",
+		func(w *reader.Writer) reader.Dict {
+			return reader.Dict{
+				"Pattern": reader.Dict{"P1": hatchPattern(w, 1, "0 0 1 rg 0 0 20 20 re f")},
+				"Font":    reader.Dict{"F1": helvetica(w)},
+			}
+		})
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blue := 0
+	for y := range img.H {
+		for x := range img.W {
+			if isBlue(img.At(x, y)) {
+				blue++
+			}
+		}
+	}
+	if blue == 0 {
+		t.Error("the glyph was not filled with the pattern: a pattern is a colour, " +
+			"and filling a glyph has to honour it as filling a path does")
+	}
+}
+
+// TestAPatternDoesNotInheritTheTextStateThatUsedIt. A pattern's content runs
+// in the DEFAULT graphics state (8.7.3.1), not in the one that used it. The
+// colour was already reset here and the text state was not, so a page that
+// set `2 Tr` -- fill AND stroke -- had every glyph of the PATTERN stroked as
+// well, in a colour the pattern never chose.
+//
+// The page fills a RECTANGLE here, not text, so that it draws no outline of
+// its own: `2 Tr` is set and then nothing on the page reads it. Every mark
+// inside the shape is the pattern's, and the pattern draws in red only.
+func TestAPatternDoesNotInheritTheTextStateThatUsedIt(t *testing.T) {
+	d := shadedPage(t, "2 Tr /Pattern cs /P1 scn 5 5 90 90 re f",
+		func(w *reader.Writer) reader.Dict {
+			cell := w.Add(&reader.Stream{Dict: reader.Dict{
+				"Type": reader.Name("Pattern"), "PatternType": reader.Integer(1),
+				"PaintType": reader.Integer(1), "TilingType": reader.Integer(1),
+				"BBox": nums(0, 0, 20, 20), "XStep": reader.Integer(20), "YStep": reader.Integer(20),
+				"Resources": reader.Dict{"Font": reader.Dict{"F2": helvetica(w)}},
+			}, Raw: []byte("1 0 0 rg BT /F2 18 Tf 1 3 Td (o) Tj ET")})
+			return reader.Dict{"Pattern": reader.Dict{"P1": cell}}
+		})
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	red, dark := 0, 0
+	for y := range img.H {
+		for x := range img.W {
+			c := img.At(x, y)
+			switch {
+			case c.R > 150 && c.G < 100 && c.B < 100:
+				red++
+			case c.R < 100 && c.G < 100 && c.B < 100:
+				dark++
+			}
+		}
+	}
+	if red == 0 {
+		t.Fatal("the pattern drew no red: this test no longer measures what it says")
+	}
+	if dark > 0 {
+		t.Errorf("%d dark pixels beside %d red: the pattern inherited `2 Tr` and "+
+			"stroked its own glyphs in a colour it never set", dark, red)
+	}
+}

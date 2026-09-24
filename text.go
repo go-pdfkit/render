@@ -210,24 +210,24 @@ func (r *renderer) drawGlyph(g *gstate, f *pdfFont, code int, resources reader.D
 			path.Close()
 		}
 	}
-	r.paintGlyph(g, path)
+	r.paintGlyph(g, path, resources)
 	if f.embolden {
 		// A face carried in one weight is made bold by drawing its outline as
 		// well as filling it.
-		r.thicken(g, path)
+		r.thicken(g, path, resources)
 	}
 }
 
 // thicken strokes a glyph's outline in the colour it was filled with, which is
 // what makes a face carried in one weight read as bold.
-func (r *renderer) thicken(g *gstate, path *vector.Path) {
+func (r *renderer) thicken(g *gstate, path *vector.Path, resources reader.Dict) {
 	width := fauxBoldWidth * g.text.size * emScale(g)
 	if width <= 0 {
 		return
 	}
 	style := vector.StrokeStyle{Width: width, Cap: vector.RoundCap, Join: vector.RoundJoin}
 	if cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, style, r.img.W, r.img.H); ok {
-		r.paint(g, cov, ox, oy, w, h, g.fill, g.fillAlpha)
+		r.paintCoverage(g, g.fillPattern, cov, ox, oy, w, h, g.fill, g.fillAlpha, resources)
 	}
 }
 
@@ -240,15 +240,15 @@ func emScale(g *gstate) float64 {
 }
 
 // paintGlyph fills or strokes a glyph, in whichever way the text state says.
-func (r *renderer) paintGlyph(g *gstate, path *vector.Path) {
+func (r *renderer) paintGlyph(g *gstate, path *vector.Path, resources reader.Dict) {
 	if g.text.mode == modeFill || g.text.mode == modeFillStroke {
 		if cov, ox, oy, w, h, ok := r.rz.Fill(path, vector.NonZero, r.img.W, r.img.H); ok {
-			r.paint(g, cov, ox, oy, w, h, g.fill, g.fillAlpha)
+			r.paintCoverage(g, g.fillPattern, cov, ox, oy, w, h, g.fill, g.fillAlpha, resources)
 		}
 	}
 	if g.text.mode == modeStroke || g.text.mode == modeFillStroke {
 		if cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, r.strokeStyle(g), r.img.W, r.img.H); ok {
-			r.paint(g, cov, ox, oy, w, h, g.stroke, g.strokeAlpha)
+			r.paintCoverage(g, g.strokePattern, cov, ox, oy, w, h, g.stroke, g.strokeAlpha, resources)
 		}
 	}
 }
