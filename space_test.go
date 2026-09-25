@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"testing"
 
 	"github.com/go-pdfkit/reader"
@@ -203,4 +204,49 @@ func TestOperandsThatAreNotNumbers(t *testing.T) {
 	// takes nothing for the rest, which is black.
 	d := onePage(t, [4]float64{0, 0, 20, 20}, "/x /y rg 0 0 20 20 re f", nil)
 	wantBlack(t, draw(t, d, Options{}), 10, 10)
+}
+
+// TestClamp01AnswersWhatTheMathPackageDid. clamp01 stopped calling math.Min
+// and math.Max for the builtins, which the compiler puts inline. They are
+// meant to agree on every value, and the ones worth checking are the ones the
+// package versions exist to get right: NaN, which must survive, and negative
+// zero, which must come out positive.
+func TestClamp01AnswersWhatTheMathPackageDid(t *testing.T) {
+	was := func(v float64) float64 { return math.Min(1, math.Max(0, v)) }
+	for _, v := range []float64{
+		0, 1, 0.5, -0.5, 1.5, -1e300, 1e300,
+		math.NaN(), math.Inf(1), math.Inf(-1), math.Copysign(0, -1),
+		math.SmallestNonzeroFloat64, -math.SmallestNonzeroFloat64,
+		math.MaxFloat64, -math.MaxFloat64,
+	} {
+		got, want := clamp01(v), was(v)
+		if math.IsNaN(got) != math.IsNaN(want) {
+			t.Errorf("clamp01(%v) = %v, math.Min/Max gave %v", v, got, want)
+			continue
+		}
+		if math.IsNaN(got) {
+			continue
+		}
+		// Bits, not ==: negative zero compares equal to positive zero and is
+		// not the same number.
+		if math.Float64bits(got) != math.Float64bits(want) {
+			t.Errorf("clamp01(%v) = %.17g (bits %x), math.Min/Max gave %.17g (bits %x)",
+				v, got, math.Float64bits(got), want, math.Float64bits(want))
+		}
+	}
+}
+
+// TestChannelStillClamps. channel stopped clamping before handing its value
+// to byteOf, which clamps. If byteOf ever stops, this says so.
+func TestChannelStillClamps(t *testing.T) {
+	for _, c := range []struct {
+		v    float64
+		want uint8
+	}{
+		{-1, 0}, {0, 0}, {0.5, 128}, {1, 255}, {2, 255}, {math.Inf(-1), 0}, {math.Inf(1), 255},
+	} {
+		if got := channel([]float64{c.v}, 0); got != c.want {
+			t.Errorf("channel(%v) = %d, want %d", c.v, got, c.want)
+		}
+	}
 }
