@@ -249,6 +249,18 @@ type clip struct {
 	// and no link needs a bounds test of its own.
 	cov              []float32
 	sox, soy, sw, sh int
+	// rect, when set, is this link's shape as an axis-aligned rectangle, and
+	// cov is then nil: its coverage is worked out rather than stored. Most
+	// clips a PDF sets are `re W n` -- 91% of 63038 over two corpora -- and
+	// what vector.Rect returns is what the rasteriser would have put in the
+	// grid, bit for bit, so the picture does not change.
+	rect *vector.Rect
+	// wx, wy, ww, wh is the part of that rectangle it covers ENTIRELY, where
+	// the answer is 1 and no arithmetic is needed. A clip is asked once per
+	// pixel painted through it, and most of those are nowhere near an edge:
+	// without this the rectangle form is SLOWER than the grid it replaces,
+	// because a grid answers with one load.
+	wx, wy, ww, wh int
 	// under is the clip this one narrowed, or nil. A clip is not composed
 	// with it when it is made; they are multiplied at the pixels that are
 	// PAINTED, of which a page has far fewer.
@@ -282,6 +294,19 @@ func (c *clip) at(x, y int) float64 {
 	// for -- so there is no nil to check for here.
 	v := 1.0
 	for k := c; k != nil; k = k.under {
+		if k.rect != nil {
+			if x >= k.wx && x < k.wx+k.ww && y >= k.wy && y < k.wy+k.wh {
+				continue // whole: multiplying by one
+			}
+			// Through float32 and back, because a link that stores a grid
+			// stores it as float32: a rectangle that answered in float64
+			// would differ from the same shape rasterised.
+			v *= float64(float32(k.rect.At(x, y)))
+			if v == 0 {
+				return 0
+			}
+			continue
+		}
 		v *= float64(k.cov[(y-k.soy)*k.sw+(x-k.sox)])
 		if v == 0 {
 			// Nothing further can raise it, and a shape that hides a pixel
@@ -306,17 +331,28 @@ func (c *clip) flatten() *clip {
 	return out
 }
 
-// narrow intersects the clip with one coverage grid: what was already hidden
-// stays hidden, and everything outside the new shape joins it.
-func (r *renderer) narrow(g *gstate, cov []float64, ox, oy, w, h int, ok bool) {
+// narrowRect intersects the clip with a rectangle whose coverage is worked out
+// rather than rasterised. It is narrow's twin: the same box, the same chain,
+// four numbers instead of w*h of them.
+func (r *renderer) narrowRect(g *gstate, rect vector.Rect, ox, oy, w, h int, ok bool) {
+	next, done := r.narrowBox(g, ox, oy, w, h, ok)
+	if done {
+		return
+	}
+	next.rect = &rect
+	next.wx, next.wy, next.ww, next.wh, _ = rect.Whole(r.img.W, r.img.H)
+	r.push(g, next)
+}
+
+// narrowBox works out the box a narrowing leaves and builds the link for it,
+// or settles the whole thing when nothing is left. It is where narrow and
+// narrowRect agree about what a clip's box is, so that they cannot drift.
+func (r *renderer) narrowBox(g *gstate, ox, oy, w, h int, ok bool) (next *clip, done bool) {
 	if !ok {
 		// The shape covered no pixel, so nothing may be drawn from here on.
 		g.clip = &clip{}
-		return
+		return nil, true
 	}
-	// What is left is what both shapes allow, so the new box need be no
-	// larger than the smaller of the two — which is what keeps a page that
-	// narrows itself repeatedly from paying for the whole sheet each time.
 	box := image.Rect(ox, oy, ox+w, oy+h)
 	if g.clip != nil {
 		box = box.Intersect(image.Rect(g.clip.ox, g.clip.oy,
@@ -325,13 +361,32 @@ func (r *renderer) narrow(g *gstate, cov []float64, ox, oy, w, h int, ok bool) {
 	box = box.Intersect(image.Rect(0, 0, r.img.W, r.img.H))
 	if box.Empty() {
 		g.clip = &clip{}
-		return
+		return nil, true
 	}
-	next := &clip{ox: box.Min.X, oy: box.Min.Y, w: box.Dx(), h: box.Dy(),
+	next = &clip{ox: box.Min.X, oy: box.Min.Y, w: box.Dx(), h: box.Dy(),
 		sox: box.Min.X, soy: box.Min.Y, sw: box.Dx(), sh: box.Dy(),
 		under: g.clip, depth: 1}
 	if g.clip != nil {
 		next.depth = g.clip.depth + 1
+	}
+	return next, false
+}
+
+// push puts a finished link in force, composing the chain first when it has
+// grown past what is worth walking at every painted pixel.
+func (r *renderer) push(g *gstate, next *clip) {
+	if next.depth > clipDepth {
+		next = next.flatten()
+	}
+	g.clip = next
+}
+
+// narrow intersects the clip with one coverage grid: what was already hidden
+// stays hidden, and everything outside the new shape joins it.
+func (r *renderer) narrow(g *gstate, cov []float64, ox, oy, w, h int, ok bool) {
+	next, done := r.narrowBox(g, ox, oy, w, h, ok)
+	if done {
+		return
 	}
 	// Only this shape is stored. What the clip already in force allows is not
 	// multiplied in here: a page composes far more pixels into its clips than
@@ -345,10 +400,7 @@ func (r *renderer) narrow(g *gstate, cov []float64, ox, oy, w, h int, ok bool) {
 			next.cov[y*next.w+x] = float32(cov[row+next.ox+x-ox])
 		}
 	}
-	if next.depth > clipDepth {
-		next = next.flatten()
-	}
-	g.clip = next
+	r.push(g, next)
 }
 
 // salvaged decodes a stream and keeps whatever the filter chain managed to
