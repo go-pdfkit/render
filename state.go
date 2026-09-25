@@ -237,12 +237,35 @@ func maskLevel(v uint8) float64 { return float64(v) / 255 }
 // of it. Measured before this: that form allocated 4 226 MB, and one figure
 // asked for 97 333 MB to draw a single page.
 type clip struct {
+	// ox, oy, w, h is the box of the whole chain: the intersection of every
+	// shape in it, so one test rejects a pixel no shape needs to be asked
+	// about. A clip whose box is empty lets nothing through at all, which is
+	// what a page asks for when it clips to a shape that covers no pixel.
 	ox, oy, w, h int
-	// cov is one value a pixel over the box, and nothing outside it. A clip
-	// whose box is empty lets nothing through at all, which is what a page
-	// asks for when it clips to a shape that covers no pixel.
-	cov []float32
+	// cov is THIS shape's coverage, one value a pixel over the box the chain
+	// had when it was added -- sox, soy, sw, sh. That box contains the chain
+	// box, here and in every clip added after, because a chain box only ever
+	// shrinks: so a pixel inside the chain box is inside every link's grid
+	// and no link needs a bounds test of its own.
+	cov              []float32
+	sox, soy, sw, sh int
+	// under is the clip this one narrowed, or nil. A clip is not composed
+	// with it when it is made; they are multiplied at the pixels that are
+	// PAINTED, of which a page has far fewer.
+	under *clip
+	// depth is how many links this chain has, so that a page which narrows
+	// itself without end is flattened rather than walked.
+	depth int
 }
+
+// clipDepth is how long a chain may get before narrow composes it into one
+// grid. A page that says `W n` repeatedly without a `Q` between would
+// otherwise make every painted pixel walk the lot.
+//
+// Composing costs the box once; walking costs the chain at every painted
+// pixel. Eight is where a page with an ordinary amount of nesting never
+// composes and a pathological one composes early.
+const clipDepth = 8
 
 // at is how much of one pixel of the image the clip lets through. Everything
 // outside the box is outside the clip.
@@ -253,7 +276,34 @@ func (c *clip) at(x, y int) float64 {
 	if x < c.ox || y < c.oy || x >= c.ox+c.w || y >= c.oy+c.h {
 		return 0
 	}
-	return float64(c.cov[(y-c.oy)*c.w+(x-c.ox)])
+	// Every link in a chain carries a grid: narrow gives one to each, and
+	// flatten to what it composes. The one clip that has none is the empty
+	// one, whose box is empty and which the test above has already answered
+	// for -- so there is no nil to check for here.
+	v := 1.0
+	for k := c; k != nil; k = k.under {
+		v *= float64(k.cov[(y-k.soy)*k.sw+(x-k.sox)])
+		if v == 0 {
+			// Nothing further can raise it, and a shape that hides a pixel
+			// is the commonest reason a chain is walked at all.
+			return 0
+		}
+	}
+	return v
+}
+
+// flatten composes a chain into one grid over its own box, for when walking it
+// at every painted pixel would cost more than composing it once.
+func (c *clip) flatten() *clip {
+	out := &clip{ox: c.ox, oy: c.oy, w: c.w, h: c.h,
+		sox: c.ox, soy: c.oy, sw: c.w, sh: c.h, depth: 1}
+	out.cov = make([]float32, c.w*c.h)
+	for y := 0; y < c.h; y++ {
+		for x := 0; x < c.w; x++ {
+			out.cov[y*c.w+x] = float32(c.at(c.ox+x, c.oy+y))
+		}
+	}
+	return out
 }
 
 // narrow intersects the clip with one coverage grid: what was already hidden
@@ -277,17 +327,26 @@ func (r *renderer) narrow(g *gstate, cov []float64, ox, oy, w, h int, ok bool) {
 		g.clip = &clip{}
 		return
 	}
-	next := &clip{ox: box.Min.X, oy: box.Min.Y, w: box.Dx(), h: box.Dy()}
+	next := &clip{ox: box.Min.X, oy: box.Min.Y, w: box.Dx(), h: box.Dy(),
+		sox: box.Min.X, soy: box.Min.Y, sw: box.Dx(), sh: box.Dy(),
+		under: g.clip, depth: 1}
+	if g.clip != nil {
+		next.depth = g.clip.depth + 1
+	}
+	// Only this shape is stored. What the clip already in force allows is not
+	// multiplied in here: a page composes far more pixels into its clips than
+	// it ever paints through them -- 32 million against 226 thousand on the
+	// form this was measured on -- so the product is left to the pixels that
+	// are painted.
 	next.cov = make([]float32, next.w*next.h)
 	for y := 0; y < next.h; y++ {
+		row := (next.oy + y - oy) * w
 		for x := 0; x < next.w; x++ {
-			px, py := next.ox+x, next.oy+y
-			v := float32(cov[(py-oy)*w+(px-ox)])
-			if g.clip != nil {
-				v *= float32(g.clip.at(px, py))
-			}
-			next.cov[y*next.w+x] = v
+			next.cov[y*next.w+x] = float32(cov[row+next.ox+x-ox])
 		}
+	}
+	if next.depth > clipDepth {
+		next = next.flatten()
 	}
 	g.clip = next
 }
