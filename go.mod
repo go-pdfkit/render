@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/go-gfx/gfx v0.31.0
-	github.com/go-opentype/fonts v0.9.0
+	github.com/go-opentype/fonts v0.10.0
 	github.com/go-opentype/opentype v0.12.0
 	github.com/go-pdfkit/reader v0.6.0
 )
