@@ -77,10 +77,18 @@ func at(v []float64, i int) float64 {
 }
 
 // channel reads one operand as a byte of colour.
-func channel(v []float64, i int) uint8 { return byteOf(clamp01(at(v, i))) }
+// byteOf clamps what it is given, so this does not clamp it first: on a page
+// of sampled colour that second pass was a third of the time spent drawing.
+func channel(v []float64, i int) uint8 { return byteOf(at(v, i)) }
 
 // clamp01 holds a number between nothing and everything.
-func clamp01(v float64) float64 { return math.Min(1, math.Max(0, v)) }
+//
+// The builtins rather than math.Min and math.Max: they answer the same thing
+// on every value, NaN and negative zero included -- there is a test for that
+// -- and the compiler puts them inline where the package versions are a call
+// into assembly. On a page whose colour is sampled per pixel, those calls were
+// 32% of everything.
+func clamp01(v float64) float64 { return min(1, max(0, v)) }
 
 // byteOf turns a fraction into one of the 256 levels a screen has.
 func byteOf(v float64) uint8 { return uint8(math.Round(clamp01(v) * 255)) }
