@@ -39,12 +39,67 @@ type substitute struct {
 	err  error
 }
 
-// The three stand-ins, each read once and shared.
+// A family is the four faces of one stand-in. A face is nil when the family
+// bundles no file for it, and [family.pick] says what to do about that in one
+// place rather than at each call site.
+type family struct {
+	regular, bold, italic, boldItalic *substitute
+}
+
+// The three stand-ins, each face read once and shared.
 var (
-	sansStandIn  = &substitute{ttf: arimo.TTF}
-	serifStandIn = &substitute{ttf: tinos.TTF}
-	monoStandIn  = &substitute{ttf: cousine.TTF}
+	sansStandIn = &family{
+		regular:    &substitute{ttf: arimo.TTF},
+		bold:       &substitute{ttf: arimo.Bold},
+		italic:     &substitute{ttf: arimo.Italic},
+		boldItalic: &substitute{ttf: arimo.BoldItalic},
+	}
+	serifStandIn = &family{
+		regular:    &substitute{ttf: tinos.TTF},
+		bold:       &substitute{ttf: tinos.Bold},
+		italic:     &substitute{ttf: tinos.Italic},
+		boldItalic: &substitute{ttf: tinos.BoldItalic},
+	}
+	monoStandIn = &family{
+		regular:    &substitute{ttf: cousine.TTF},
+		bold:       &substitute{ttf: cousine.Bold},
+		italic:     &substitute{ttf: cousine.Italic},
+		boldItalic: &substitute{ttf: cousine.BoldItalic},
+	}
 )
+
+// pick returns the face to draw for the weight and slope the document asked
+// for, and whether a faux bold or a faux slant is still needed on top of it
+// because this family bundles no file for that combination.
+//
+// A real face is preferred over a faked one in every case, INCLUDING the one
+// where only half of what was asked for exists: a bold italic drawn from the
+// bold face and leaned over is closer than the regular face stroked AND
+// leaned. Each fake is decided separately, because they are separate
+// distortions -- stroking changes ink, leaning changes shape, and neither
+// changes the advance the document is laid out with.
+func (f *family) pick(bold, italic bool) (s *substitute, embolden, slant bool) {
+	switch {
+	case bold && italic:
+		switch {
+		case f.boldItalic != nil:
+			return f.boldItalic, false, false
+		case f.bold != nil:
+			return f.bold, false, true
+		case f.italic != nil:
+			return f.italic, true, false
+		}
+	case bold:
+		if f.bold != nil {
+			return f.bold, false, false
+		}
+	case italic:
+		if f.italic != nil {
+			return f.italic, false, false
+		}
+	}
+	return f.regular, bold, italic
+}
 
 // get parses the stand-in, once.
 func (s *substitute) get() (*opentype.Font, error) {
@@ -59,8 +114,8 @@ const (
 	flagItalic     = 1 << 6
 )
 
-// standIn picks the face to draw a font that carries no program of its own.
-func (r *renderer) standIn(f *pdffont.Font) *substitute {
+// standIn picks the family to draw a font that carries no program of its own.
+func (r *renderer) standIn(f *pdffont.Font) *family {
 	name := strings.ToLower(baseFontName(r.doc, f))
 	switch {
 	case strings.Contains(name, "courier") || strings.Contains(name, "mono"):
@@ -114,7 +169,9 @@ func (r *renderer) attachStandIn(f *pdfFont) {
 	case "symbol", "zapfdingbats", "dingbats":
 		return
 	}
-	program, err := r.standIn(f.Font).get()
+	bold, italic := r.wantsBoldItalic(f.Font)
+	face, embolden, slant := r.standIn(f.Font).pick(bold, italic)
+	program, err := face.get()
 	if err != nil {
 		return
 	}
@@ -122,14 +179,25 @@ func (r *renderer) attachStandIn(f *pdfFont) {
 	f.perEm = float64(program.UnitsPerEm())
 	f.face = program.NewFace(program.UnitsPerEm())
 	f.substituted = true
-	f.embolden, f.slant = r.wantsBoldItalic(f.Font)
+	f.embolden, f.slant = embolden, slant
 }
 
 // wantsBoldItalic reads whether the font the document named was a bold or an
-// italic one. Only one weight of each stand-in is carried, so a bold is drawn
-// by stroking the outline as well as filling it and an italic by leaning it
-// over — which is what a typesetter calls a faux bold and a faux italic, and
-// what every reader does with a face it has not got in the weight asked for.
+// italic one. What is then DRAWN is [family.pick]'s business: where the family
+// bundles that face it is used, and only where it does not is the weight faked
+// by stroking the outline or the slope by leaning it over.
+//
+// The difference is not cosmetic, and it has two halves that are worth keeping
+// apart because they are exercised by different documents.
+//
+// A faked bold leaves the ADVANCES of the regular face, so a standard font
+// named with no /Widths of its own is laid out from the wrong ones:
+// Helvetica-Bold sets `m` at 889/1000 em where Helvetica sets it at 833. That
+// half is real and it is RARE -- of 1248 bold faces carrying no program across
+// both corpora here, 3215 documents, every single one supplies /Widths.
+//
+// The other half is the INK, and it is the one the corpora exercise: a stroked
+// outline is not the outline of a bold, whoever supplies the widths.
 func (r *renderer) wantsBoldItalic(f *pdffont.Font) (embolden, slant bool) {
 	name := strings.ToLower(baseFontName(r.doc, f))
 	embolden = strings.Contains(name, "bold") || strings.Contains(name, "black") ||
@@ -150,9 +218,12 @@ func (r *renderer) wantsBoldItalic(f *pdffont.Font) (embolden, slant bool) {
 	return embolden, slant
 }
 
-// faux is how far a faux bold is stroked, as a fraction of the em. It is what
-// a typesetter would reach for: enough to read as bold beside the same face
-// unemboldened, not so much that the counters fill in.
+// fauxBoldWidth is how far a faux bold is stroked, as a fraction of the em. It
+// is what a typesetter would reach for: enough to read as bold beside the same
+// face unemboldened, not so much that the counters fill in.
+//
+// The three metric-compatible families all bundle a real bold, so this is now
+// reached only by a family that does not -- it is a fallback, not the road taken.
 const fauxBoldWidth = 0.024
 
 // fauxSlant is how far a faux italic leans, as a tangent: about twelve
