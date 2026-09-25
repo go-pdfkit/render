@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/go-gfx/gfx/raster"
+	"github.com/go-gfx/gfx/vector"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -135,5 +136,155 @@ func TestAClipThatCoversNoPixelAnswersForEveryPixel(t *testing.T) {
 	r.narrow(g, whole, 0, 0, 8, 8, true)
 	if got := g.clip.at(4, 4); got != 0 {
 		t.Errorf("at(4,4) = %v after narrowing an empty clip, want 0", got)
+	}
+}
+
+// TestARectangleClipAnswersWithoutAGrid. A clip whose shape was known to be a
+// rectangle before it was built carries four numbers instead of w*h of them,
+// and works out what it lets through. What it must answer is what the same
+// rectangle rasterised would have: whole inside, partly on a fractional edge,
+// nothing outside.
+func TestARectangleClipAnswersWithoutAGrid(t *testing.T) {
+	r := &renderer{img: raster.New(20, 20)}
+	g := &gstate{}
+	rect := vector.Rect{X0: 4.5, Y0: 4, X1: 12, Y1: 11}
+	ox, oy, w, h, ok := rect.Box(20, 20)
+	r.narrowRect(g, rect, ox, oy, w, h, ok)
+
+	if g.clip == nil || g.clip.rect == nil {
+		t.Fatal("the clip kept no rectangle")
+	}
+	if g.clip.cov != nil {
+		t.Error("the clip allocated a grid for a shape four numbers describe")
+	}
+	// Inside, whole: answered from the box, with no arithmetic.
+	if got := g.clip.at(8, 7); got != 1 {
+		t.Errorf("at(8,7) inside = %v, want 1", got)
+	}
+	// The left edge falls mid-pixel, so that column is half-covered.
+	if got := g.clip.at(4, 7); got <= 0 || got >= 1 {
+		t.Errorf("at(4,7) on a fractional edge = %v, want something between 0 and 1", got)
+	}
+	// Outside the box entirely.
+	for _, p := range [][2]int{{2, 7}, {15, 7}, {8, 1}, {8, 18}} {
+		if got := g.clip.at(p[0], p[1]); got != 0 {
+			t.Errorf("at(%d,%d) outside = %v, want 0", p[0], p[1], got)
+		}
+	}
+	// And it agrees with the same rectangle rasterised, pixel for pixel.
+	rz := &vector.Rasterizer{}
+	path := vector.NewPath()
+	path.MoveTo(rect.X0, rect.Y0)
+	path.LineTo(rect.X1, rect.Y0)
+	path.LineTo(rect.X1, rect.Y1)
+	path.LineTo(rect.X0, rect.Y1)
+	path.Close()
+	cov, fox, foy, fw, fh, fok := rz.Fill(path, vector.NonZero, 20, 20)
+	if !fok {
+		t.Fatal("the rasteriser drew nothing")
+	}
+	var grid gstate
+	r.narrow(&grid, cov, fox, foy, fw, fh, fok)
+	for y := 0; y < 20; y++ {
+		for x := 0; x < 20; x++ {
+			if a, b := g.clip.at(x, y), grid.clip.at(x, y); a != b {
+				t.Fatalf("at(%d,%d): rectangle %.17g, grid %.17g", x, y, a, b)
+			}
+		}
+	}
+}
+
+// TestARectangleClipThatHidesAPixelStopsTheChain. A zero anywhere in a chain
+// means zero, and the rest of it need not be asked.
+func TestARectangleClipThatHidesAPixelStopsTheChain(t *testing.T) {
+	r := &renderer{img: raster.New(20, 20)}
+	g := &gstate{}
+	// Two rectangles that overlap in a strip: outside the strip one of them
+	// hides the pixel, and its partial edge is what the other multiplies.
+	a := vector.Rect{X0: 2, Y0: 2, X1: 10.5, Y1: 18}
+	b := vector.Rect{X0: 4, Y0: 4, X1: 16, Y1: 16}
+	for _, rect := range []vector.Rect{a, b} {
+		ox, oy, w, h, ok := rect.Box(20, 20)
+		r.narrowRect(g, rect, ox, oy, w, h, ok)
+	}
+	if got := g.clip.at(6, 8); got != 1 {
+		t.Errorf("at(6,8), inside both = %v, want 1", got)
+	}
+	if got := g.clip.at(10, 8); got <= 0 || got >= 1 {
+		t.Errorf("at(10,8), on the first rectangle's fractional edge = %v, want a fraction", got)
+	}
+	if got := g.clip.at(12, 8); got != 0 {
+		t.Errorf("at(12,8), past the first rectangle = %v, want 0", got)
+	}
+}
+
+// TestARectangleThatCoversNoPixel. A `re` with no area clips everything away,
+// and narrowRect must say so rather than keep a rectangle nothing is inside.
+func TestARectangleThatCoversNoPixel(t *testing.T) {
+	r := &renderer{img: raster.New(20, 20)}
+	g := &gstate{}
+	rect := vector.Rect{X0: 5, Y0: 5, X1: 5, Y1: 9}
+	ox, oy, w, h, ok := rect.Box(20, 20)
+	if ok {
+		t.Fatal("an empty rectangle claims a box")
+	}
+	r.narrowRect(g, rect, ox, oy, w, h, ok)
+	if g.clip == nil || g.clip.at(5, 5) != 0 {
+		t.Error("an empty rectangle still lets something through")
+	}
+}
+
+// TestARectangleThinnerThanASubScanline. The rasteriser samples four
+// sub-scanlines a row, at y+0.125, 0.375, 0.625 and 0.875. A rectangle that
+// falls BETWEEN two of them has a box -- the row is within floor(Y0)..ceil(Y1)
+// -- and covers nothing in it.
+//
+// It is worth pinning because it is where a clip that let a pixel through
+// would be the difference between a mark and no mark, and because it is the
+// one case in which a rectangle link answers zero: the chain can stop there
+// without asking the rest.
+func TestARectangleThinnerThanASubScanline(t *testing.T) {
+	r := &renderer{img: raster.New(20, 20)}
+	rect := vector.Rect{X0: 4, Y0: 5.0, X1: 12, Y1: 5.1}
+	ox, oy, w, h, ok := rect.Box(20, 20)
+	if !ok {
+		t.Fatal("a rectangle with area claims no box")
+	}
+	if oy != 5 || h != 1 {
+		t.Fatalf("box rows %d..%d, want just row 5", oy, oy+h)
+	}
+	// It is in the box and covers nothing of it.
+	if got := rect.At(8, 5); got != 0 {
+		t.Errorf("At(8,5) = %v, want 0: the rectangle is between two sub-scanlines", got)
+	}
+
+	// And a chain stops at it: the second rectangle is never asked.
+	g := &gstate{}
+	r.narrowRect(g, rect, ox, oy, w, h, ok)
+	wide := vector.Rect{X0: 0, Y0: 0, X1: 20, Y1: 20}
+	wox, woy, ww, wh, wok := wide.Box(20, 20)
+	r.narrowRect(g, wide, wox, woy, ww, wh, wok)
+	if got := g.clip.at(8, 5); got != 0 {
+		t.Errorf("at(8,5) through the chain = %v, want 0", got)
+	}
+
+	// What the rasteriser makes of the same rectangle, for comparison.
+	rz := &vector.Rasterizer{}
+	path := vector.NewPath()
+	path.MoveTo(rect.X0, rect.Y0)
+	path.LineTo(rect.X1, rect.Y0)
+	path.LineTo(rect.X1, rect.Y1)
+	path.LineTo(rect.X0, rect.Y1)
+	path.Close()
+	if cov, fox, foy, fw, fh, fok := rz.Fill(path, vector.NonZero, 20, 20); fok {
+		if fox != ox || foy != oy || fw != w || fh != h {
+			t.Errorf("boxes differ: rectangle (%d,%d,%d,%d), rasteriser (%d,%d,%d,%d)",
+				ox, oy, w, h, fox, foy, fw, fh)
+		}
+		for i, v := range cov {
+			if v != rect.At(fox+i%fw, foy+i/fw) {
+				t.Fatalf("pixel %d: rasteriser %v, rectangle %v", i, v, rect.At(fox+i%fw, foy+i/fw))
+			}
+		}
 	}
 }
