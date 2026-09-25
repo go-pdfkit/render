@@ -1,6 +1,9 @@
 package render
 
 import (
+	"bytes"
+	"github.com/go-opentype/fonts/arimo"
+	"math"
 	"testing"
 
 	"github.com/go-gfx/gfx/raster"
@@ -41,7 +44,7 @@ func TestTheStandInAFontNameAsksFor(t *testing.T) {
 	cases := []struct {
 		name string
 		base string
-		want *substitute
+		want *family
 	}{
 		{"Helvetica", "Helvetica", sansStandIn},
 		{"a subsetted Helvetica", "ABCDEF+Helvetica-Bold", sansStandIn},
@@ -68,7 +71,7 @@ func TestTheStandInAFontNameAsksFor(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		flags int64
-		want  *substitute
+		want  *family
 	}{
 		{"fixed pitch", flagFixedPitch, monoStandIn},
 		{"serif", flagSerif, serifStandIn},
@@ -248,7 +251,7 @@ func TestWhenAStandInCannotBeRead(t *testing.T) {
 	// outlines rather than half a face.
 	was := sansStandIn
 	t.Cleanup(func() { sansStandIn = was })
-	sansStandIn = &substitute{ttf: []byte("not a font at all")}
+	sansStandIn = &family{regular: &substitute{ttf: []byte("not a font at all")}}
 
 	d := pageNamingAFont(t, "BT /F 20 Tf 5 20 Td (Hello) Tj ET",
 		reader.Dict{"BaseFont": reader.Name("Helvetica")})
@@ -262,6 +265,173 @@ func TestTextSetAtANegativeSize(t *testing.T) {
 	// a bold one has no outline to thicken because the width would be below
 	// nothing too.
 	d := pageNamingAFont(t, "BT /F -20 Tf 50 40 Td (Hello) Tj ET",
+		reader.Dict{"BaseFont": reader.Name("Helvetica-Bold")})
+	if _, err := Page(d, 1, Options{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWhichFaceIsPickedAndWhatIsStillFaked. Each fake is a separate
+// distortion -- stroking changes ink, leaning changes shape -- so a family
+// that has half of what was asked for should fake only the other half.
+func TestWhichFaceIsPickedAndWhatIsStillFaked(t *testing.T) {
+	reg := &substitute{ttf: arimo.TTF}
+	bold := &substitute{ttf: arimo.Bold}
+	ital := &substitute{ttf: arimo.Italic}
+	bi := &substitute{ttf: arimo.BoldItalic}
+
+	full := &family{regular: reg, bold: bold, italic: ital, boldItalic: bi}
+	noBI := &family{regular: reg, bold: bold, italic: ital}
+	boldOnly := &family{regular: reg, bold: bold}
+	italOnly := &family{regular: reg, italic: ital}
+	alone := &family{regular: reg}
+
+	for _, c := range []struct {
+		name         string
+		fam          *family
+		bold, italic bool
+		want         *substitute
+		wantEmb      bool
+		wantSlant    bool
+	}{
+		{"the regular", full, false, false, reg, false, false},
+		{"the bold", full, true, false, bold, false, false},
+		{"the italic", full, false, true, ital, false, false},
+		{"the bold italic", full, true, true, bi, false, false},
+
+		// No bold italic file: lean the real bold rather than stroke AND
+		// lean the regular. One distortion instead of two.
+		{"bold italic from the bold", noBI, true, true, bold, false, true},
+		{"bold italic from the italic", italOnly, true, true, ital, true, false},
+		{"bold italic with only a bold", boldOnly, true, true, bold, false, true},
+
+		{"bold with no bold", italOnly, true, false, reg, true, false},
+		{"italic with no italic", boldOnly, false, true, reg, false, true},
+		{"a family of one", alone, true, true, reg, true, true},
+		{"a family of one, upright", alone, false, false, reg, false, false},
+	} {
+		got, emb, slant := c.fam.pick(c.bold, c.italic)
+		if got != c.want || emb != c.wantEmb || slant != c.wantSlant {
+			t.Errorf("%s: picked %p faux(bold=%v slant=%v), want %p faux(bold=%v slant=%v)",
+				c.name, got, emb, slant, c.want, c.wantEmb, c.wantSlant)
+		}
+	}
+}
+
+// TestABoldStandInCarriesTheBoldAdvances is the measurement the faux bold
+// could never pass. Stroking an outline does not change what it advances by,
+// so a document naming Helvetica-Bold with no /Widths of its own was laid out
+// on Helvetica's widths: 'm' at 833/1000 em where the bold sets it at 889.
+func TestABoldStandInCarriesTheBoldAdvances(t *testing.T) {
+	width := func(base string) float64 {
+		t.Helper()
+		r, f := fontOf(t, reader.Dict{"BaseFont": reader.Name(base)})
+		_ = r
+		if !f.substituted {
+			t.Fatalf("%s: not substituted, so this measures nothing", base)
+		}
+		gid, ok := f.program.GlyphIndex('m')
+		if !ok {
+			t.Fatalf("%s: 'm' is not mapped", base)
+		}
+		return float64(f.program.GlyphAdvance(gid)) * 1000 / f.perEm
+	}
+	reg, bold := width("Helvetica"), width("Helvetica-Bold")
+	// The Adobe core-14 AFM widths, to within the rounding of Arimo's
+	// 2048-unit em.
+	if math.Abs(reg-833) > 1 {
+		t.Errorf("Helvetica 'm' = %.2f/1000, want 833", reg)
+	}
+	if math.Abs(bold-889) > 1 {
+		t.Errorf("Helvetica-Bold 'm' = %.2f/1000, want 889 -- a faked bold would read %.2f", bold, reg)
+	}
+}
+
+// TestABoldStandInIsNotAlsoStroked. Drawing the real bold AND thickening it
+// would overshoot by as much as the faux bold undershot, and every figure
+// would still be wrong -- in the other direction, which is harder to notice.
+func TestABoldStandInIsNotAlsoStroked(t *testing.T) {
+	for _, c := range []struct {
+		base                    string
+		wantEmbolden, wantSlant bool
+	}{
+		{"Helvetica", false, false},
+		{"Helvetica-Bold", false, false},
+		{"Helvetica-Oblique", false, false},
+		{"Helvetica-BoldOblique", false, false},
+		{"Times-Bold", false, false},
+		{"Times-BoldItalic", false, false},
+		{"Courier-Bold", false, false},
+		{"Courier-BoldOblique", false, false},
+	} {
+		_, f := fontOf(t, reader.Dict{"BaseFont": reader.Name(c.base)})
+		if f.embolden != c.wantEmbolden || f.slant != c.wantSlant {
+			t.Errorf("%s: faux(bold=%v slant=%v), want (%v %v) -- the family bundles this face",
+				c.base, f.embolden, f.slant, c.wantEmbolden, c.wantSlant)
+		}
+	}
+}
+
+// TestTheFauxBoldStillWorksForAFamilyThatHasNoBold. Bundling a real bold for
+// all three metric-compatible families left the stroking path with no caller
+// in the tests, which is how a fallback rots: the day a family is added
+// without one, it draws the regular weight and says nothing. So the fallback
+// is exercised here on a family deliberately reduced to its regular face.
+func TestTheFauxBoldStillWorksForAFamilyThatHasNoBold(t *testing.T) {
+	ink := func(base string) int {
+		t.Helper()
+		d := pageNamingAFont(t, "BT /F 40 Tf 5 20 Td (mmm) Tj ET",
+			reader.Dict{"BaseFont": reader.Name(base)})
+		return inked(draw(t, d, Options{}))
+	}
+	real := ink("Helvetica-Bold")
+
+	was := sansStandIn
+	t.Cleanup(func() { sansStandIn = was })
+	sansStandIn = &family{regular: &substitute{ttf: arimo.TTF}}
+
+	plain, faked := ink("Helvetica"), ink("Helvetica-Bold")
+	if faked <= plain {
+		t.Errorf("faux bold drew %d inked pixels against the regular's %d: it did not thicken", faked, plain)
+	}
+	if real <= plain {
+		t.Errorf("the real bold drew %d against the regular's %d", real, plain)
+	}
+	t.Logf("inked pixels: regular %d, faux bold %d, real bold %d", plain, faked, real)
+}
+
+// TestTheFauxSlantStillWorksForAFamilyThatHasNoItalic is the faux bold's twin,
+// and rots the same way: every bundled family now has an italic file, so
+// nothing reaches the leaning matrix unless a test puts a family there without
+// one.
+func TestTheFauxSlantStillWorksForAFamilyThatHasNoItalic(t *testing.T) {
+	upright := func() []byte {
+		d := pageNamingAFont(t, "BT /F 40 Tf 5 20 Td (H) Tj ET",
+			reader.Dict{"BaseFont": reader.Name("Helvetica")})
+		return draw(t, d, Options{}).Pix
+	}
+	was := sansStandIn
+	t.Cleanup(func() { sansStandIn = was })
+	sansStandIn = &family{regular: &substitute{ttf: arimo.TTF}}
+
+	plain := upright()
+	d := pageNamingAFont(t, "BT /F 40 Tf 5 20 Td (H) Tj ET",
+		reader.Dict{"BaseFont": reader.Name("Helvetica-Oblique")})
+	leaned := draw(t, d, Options{}).Pix
+	if bytes.Equal(plain, leaned) {
+		t.Error("a faux italic drew the same pixels as the upright face: it did not lean")
+	}
+}
+
+// TestAGlyphTooSmallToThicken. A faux bold whose stroke width comes to nothing
+// -- text set at a negative size, whose glyphs are turned over -- must leave
+// the glyph filled rather than stroke it by a negative width.
+func TestAGlyphTooSmallToThicken(t *testing.T) {
+	was := sansStandIn
+	t.Cleanup(func() { sansStandIn = was })
+	sansStandIn = &family{regular: &substitute{ttf: arimo.TTF}}
+
+	d := pageNamingAFont(t, "BT /F -40 Tf 50 40 Td (mmm) Tj ET",
 		reader.Dict{"BaseFont": reader.Name("Helvetica-Bold")})
 	if _, err := Page(d, 1, Options{}); err != nil {
 		t.Fatal(err)
