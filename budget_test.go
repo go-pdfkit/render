@@ -28,7 +28,23 @@ func TestAPageMayBeGivenOnlySoLong(t *testing.T) {
 	// Some pages take a very long time, and a caller drawing somebody else's
 	// file cannot afford to wait for the worst of them. What comes back is
 	// how far it got, and an error saying so.
-	d := slowPage(t, 400000)
+	const rects = 400000
+
+	// What one drawing operation costs ON THIS MACHINE. The deadline is looked
+	// at once every timeCheckEvery operations, so how far a page overshoots is
+	// a quantity in OPERATIONS. Turning that into a number of seconds needs the
+	// speed of the machine drawing it -- and the seconds this test used to
+	// allow were one machine's seconds. Under emulation the same correct code
+	// overshot far further and the riscv64 and s390x lanes failed on a bound,
+	// not on a defect.
+	const calibrate = 20000
+	cal := time.Now()
+	if _, err := Page(slowPage(t, calibrate), 1, Options{Scale: 1}); err != nil {
+		t.Fatal(err)
+	}
+	perOp := time.Since(cal) / calibrate
+
+	d := slowPage(t, rects)
 	start := time.Now()
 	img, err := Page(d, 1, Options{Scale: 1, MaxDuration: 50 * time.Millisecond})
 	took := time.Since(start)
@@ -41,9 +57,12 @@ func TestAPageMayBeGivenOnlySoLong(t *testing.T) {
 	if img.W == 0 || img.H == 0 {
 		t.Fatalf("what came back is %dx%d", img.W, img.H)
 	}
-	// It has to stop near when it was told to, not merely eventually.
-	if took > 5*time.Second {
-		t.Errorf("it took %s to give up on fifty milliseconds", took)
+	// It has to stop near when it was told to, not merely eventually: measured
+	// in the work it got through rather than in seconds, it may not draw more
+	// than a twentieth of the page.
+	if allowed := 50*time.Millisecond + time.Duration(rects/20)*perOp; took > allowed {
+		t.Errorf("it took %s to give up on fifty milliseconds; at %v an operation that is more than a twentieth of the page (%s)",
+			took, perOp, allowed)
 	}
 }
 
