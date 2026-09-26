@@ -62,16 +62,16 @@ jobs:
   # s390x matters most: it is BIG-ENDIAN. poppler and pdfium do not test there
   # either, so a green lane here is a capability neither reference has.
   arch-qemu:
-    name: arch ${{ matrix.goarch }} (qemu)
+    name: arch ${{ matrix.goarch }} (${{ matrix.via }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { goarch: riscv64, exec: "-exec=qemu-riscv64-static" }
-          - { goarch: loong64, exec: "-exec=qemu-loongarch64-static" }
-          - { goarch: ppc64le, exec: "-exec=qemu-ppc64le-static" }
-          - { goarch: s390x,   exec: "-exec=qemu-s390x-static" }
+          - { goarch: riscv64, exec: "-exec=qemu-riscv64-static", via: qemu }
+          - { goarch: loong64, exec: "-exec=qemu-loongarch64-static", via: qemu }
+          - { goarch: ppc64le, exec: "-exec=qemu-ppc64le-static", via: qemu }
+          - { goarch: s390x,   exec: "-exec=qemu-s390x-static", via: qemu }
           # 32-bit. Nothing here had ever been built for a 32-bit target,
           # let alone run on one -- and a 32-bit `int` is where a pixel count
           # that multiplies a width by a height stops fitting. poppler runs on
@@ -91,8 +91,8 @@ jobs:
           # difference. qemu-i386 loses the guest's floating-point state across
           # the signal Go delivers for asynchronous preemption. Emulating 386
           # here would buy nothing and cost a lane that goes red at random.
-          - { goarch: "386",   exec: "" }
-          - { goarch: arm,     exec: "-exec=qemu-arm-static" }
+          - { goarch: "386",   exec: "", via: native }
+          - { goarch: arm,     exec: "-exec=qemu-arm-static", via: qemu }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
