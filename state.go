@@ -91,6 +91,19 @@ type renderer struct {
 	// state and uses it over and over.
 	softMasks map[softMaskKey][]uint8
 
+	// masked is the buffer mask() writes into, kept so that a page does not
+	// allocate a coverage grid for every mark it makes through a clip. It is
+	// safe to reuse although paint() is re-entrant -- a pattern's tile draws
+	// through paint again -- because the buffer's whole life is inside one
+	// paint: mask fills it, Composite reads it, record reads it, and nothing
+	// between those recurses.
+	//
+	// A government form clips two thousand times and an arXiv figure six
+	// thousand; on the corpus's worst page, a 2.4 KB file whose Type 3 glyph
+	// fills with a pattern that shows the same glyph, this one allocation was
+	// 900 MB of 2.2 GB.
+	masked []float64
+
 	// painted records how much of each pixel has been marked, and is set only
 	// while a soft mask of the second kind is being drawn — which is the one
 	// kind that asks not what came out but whether anything did.
@@ -202,10 +215,17 @@ func (r *renderer) markPixel(x, y int, a float64) {
 	r.painted[i] = float32(was + a*(1-was))
 }
 
-// mask multiplies a coverage grid by the clip and the alpha, in place on a
-// copy, since the rasteriser hands back its own scratch.
+// mask multiplies a coverage grid by the clip and the alpha, into a buffer of
+// its own: the rasteriser hands back its own scratch, which a tiling pattern
+// reads again for the next tile, so this must not write through it.
+//
+// The buffer is r.masked rather than a fresh allocation. See its declaration for
+// why reuse is safe under re-entry.
 func (r *renderer) mask(g *gstate, cov []float64, ox, oy, w, h int, alpha float64) []float64 {
-	out := make([]float64, len(cov))
+	if cap(r.masked) < len(cov) {
+		r.masked = make([]float64, len(cov))
+	}
+	out := r.masked[:len(cov)]
 	copy(out, cov)
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
