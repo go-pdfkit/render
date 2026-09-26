@@ -216,7 +216,11 @@ func (r *renderer) decoded(name string, object int, st *reader.Stream, res reade
 			Filter:  imageFilterOf(r.doc, st),
 			Decoded: r.hasDecodeArray(st.Dict),
 			Stencil: bool(stencil),
-			Pic:     &raster.Image{W: s.w, H: s.h, Pix: s.pix},
+			// Expanded: raster.Image.Pix is four bytes a pixel and callers read
+			// it directly, so the one-byte-plus-palette form a single-component
+			// picture is HELD in must not leave this package. It is a way of
+			// spending less memory, not a second pixel format.
+			Pic: pic(s),
 		})
 	}
 	// A mask is a picture in its own right, stored in its own filter, and it
@@ -243,7 +247,11 @@ func (r *renderer) decoded(name string, object int, st *reader.Stream, res reade
 			Filter:  imageFilterOf(r.doc, ms),
 			Decoded: r.hasDecodeArray(ms.Dict),
 			Stencil: true,
-			Pic:     &raster.Image{W: s.w, H: s.h, Pix: s.pix},
+			// Expanded: raster.Image.Pix is four bytes a pixel and callers read
+			// it directly, so the one-byte-plus-palette form a single-component
+			// picture is HELD in must not leave this package. It is a way of
+			// spending less memory, not a second pixel format.
+			Pic: pic(s),
 		})
 	}
 	return out
@@ -335,4 +343,11 @@ func (r *renderer) imagesDrawn(content []byte, res reader.Dict, depth int) []Ima
 		}
 	}
 	return out
+}
+
+// pic hands a decoded picture out in the four-bytes-a-pixel form the exported
+// raster.Image promises, whatever form it was held in.
+func pic(s *sampled) *raster.Image {
+	s.expand()
+	return &raster.Image{W: s.w, H: s.h, Pix: s.pix}
 }

@@ -19,14 +19,49 @@ import (
 type sampled struct {
 	w, h int
 	// pix is four bytes a pixel, straight alpha, the same shape as a raster
-	// image so that drawing it is a matter of sampling.
+	// image so that drawing it is a matter of sampling -- unless pal is set,
+	// and then it is ONE byte a pixel and pal says what each byte means.
 	pix []uint8
+	// pal turns one byte into a colour, and is set for a picture of a single
+	// component of at most eight bits.
+	//
+	// That is not a rare shape: every sampled image in a corpus of 250 scanned
+	// documents is of it, 2.05 billion pixels between them. In this form such a
+	// picture costs a QUARTER of the memory, which is what lets the ceiling on
+	// how large a picture may be become a ceiling on BYTES rather than on
+	// pixels -- see maxImageBytes. A 400 dpi bilevel newspaper page is 83
+	// megapixels and 83 MB here, where it was 333 MB and refused.
+	pal []color.RGBA
 }
 
 // at reads one pixel.
 func (s *sampled) at(x, y int) color.RGBA {
+	if s.pal != nil {
+		return s.pal[s.pix[y*s.w+x]]
+	}
 	i := (y*s.w + x) * 4
 	return color.RGBA{R: s.pix[i], G: s.pix[i+1], B: s.pix[i+2], A: s.pix[i+3]}
+}
+
+// expand turns the one-byte form into the four-byte one.
+//
+// The one-byte form cannot be written to a pixel at a time: its bytes are
+// indices into a palette every pixel shares, so changing one pixel's colour
+// would change every pixel that names the same entry. The three callers that do
+// write pixels -- a soft mask's alpha, a colour key, a stencil's fill -- call
+// this first. None of them can be reached with a palette in place, because
+// onePerPixel refuses the form for a picture that names a mask or is one; this
+// is the floor under that, not a path the corpus takes.
+func (s *sampled) expand() {
+	if s.pal == nil {
+		return
+	}
+	pix := make([]uint8, s.w*s.h*4)
+	for i, v := range s.pix {
+		c := s.pal[v]
+		pix[i*4], pix[i*4+1], pix[i*4+2], pix[i*4+3] = c.R, c.G, c.B, c.A
+	}
+	s.pix, s.pal = pix, nil
 }
 
 // drawImage puts an image XObject on the page. A PDF image occupies the unit
@@ -95,9 +130,52 @@ func unitSquareBounds(m geometry.Matrix, w, h int) image.Rectangle {
 	return r.Intersect(image.Rect(0, 0, w, h))
 }
 
-// maxImagePixels bounds how large an image may be decoded to, so a file cannot
-// name a grid it would take the whole machine to hold.
-const maxImagePixels = 64 << 20
+// maxImageBytes bounds how much memory one picture may be decoded INTO, so a
+// file cannot name a grid it would take the whole machine to hold.
+//
+// The bound used to be a pixel count, 64 << 20, with four bytes a pixel implied:
+// the same 256 MB. Expressed in pixels it refused things it had no reason to.
+// A 400 dpi bilevel newspaper scan is 7 779 by 10 699 -- 83 megapixels, past the
+// old ceiling -- and in the one-byte form it holds in 83 MB, a third of what the
+// ceiling allows. Five pages of the measured corpus came back BLANK for that
+// reason, with a third to a half of their pixels wrong, and fast enough that a
+// speed table read them as wins.
+const maxImageBytes = 256 << 20
+
+// maxImagePixels is the same bound for the paths whose cost is four bytes a
+// pixel and is known to be: a JPEG or JPEG 2000 codestream, which decodes to
+// colour whatever it holds.
+const maxImagePixels = maxImageBytes / 4
+
+// onePerPixel says whether a picture may be held as one byte a pixel and a
+// palette. It is asked twice -- once to bound the memory before any of it is
+// spent, and once to choose the form -- so it must answer the same both times.
+//
+// A single component of at most eight bits has at most 256 values, so a palette
+// says everything. A picture that names a mask or IS one is refused the form
+// because applying a mask writes pixels, and a palette is shared.
+func (r *renderer) onePerPixel(dict reader.Dict, resources reader.Dict) bool {
+	bpc := int(intOr(resolve(r.doc, dict.Get("BitsPerComponent")), 8))
+	if bpc > 8 {
+		return false
+	}
+	if b, ok := reader.ToBool(resolve(r.doc, dict.Get("ImageMask"))); ok && b {
+		return false
+	}
+	// Asked the way applyTransparency asks it -- resolve, then try to convert.
+	// Dict.Get returns Null{} for a key that is not there, NEVER nil, so
+	// `dict.Get("SMask") != nil` is true of every dictionary in every file: the
+	// first version of this predicate was written that way and was therefore
+	// always false, which made the whole change inert and looked exactly like
+	// the ceiling still refusing the page.
+	if _, ok := reader.ToStream(resolve(r.doc, dict.Get("SMask"))); ok {
+		return false
+	}
+	if _, ok := reader.ToStream(resolve(r.doc, dict.Get("Mask"))); ok {
+		return false
+	}
+	return r.colourSpace(dict.Get("ColorSpace"), resources, 0).components == 1
+}
 
 // decodeImage turns an image XObject into the grid of colours a page draws:
 // the picture the codec read, with whatever mask it names applied to it.
@@ -131,7 +209,18 @@ func (r *renderer) decodeBase(dict reader.Dict, raw []byte, resources reader.Dic
 	h := int(intOr(resolve(r.doc, dict.Get("Height")), 0))
 	// int64 for the same reason as in affordDecoded: these two numbers come
 	// out of the file, and their product does not fit a 32-bit int.
-	if w <= 0 || h <= 0 || int64(w)*int64(h) > maxImagePixels {
+	//
+	// The bound is on BYTES, and how many bytes a pixel costs is asked of the
+	// dictionary before a single one is spent.
+	// r.bounded is true exactly on the Images path, which hands pictures OUT
+	// through raster.Image and so expands them to four bytes a pixel. Budget
+	// what that path will really spend, or the ceiling would promise 256 MB and
+	// the expansion would take 333.
+	bpp := int64(4)
+	if !r.bounded && r.onePerPixel(dict, resources) {
+		bpp = 1
+	}
+	if w <= 0 || h <= 0 || int64(w)*int64(h)*bpp > maxImageBytes {
 		return nil
 	}
 	// An image whose filter chain broke part way gives the rows it managed,
@@ -226,11 +315,10 @@ func (r *renderer) samples(dict reader.Dict, data []byte, w, h int, resources re
 	sp := r.colourSpace(dict.Get("ColorSpace"), resources, 0)
 	n := sp.components
 	decode := r.decodeArray(dict, sp, bpc)
-	out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
 	rowBits := w * n * bpc
 	rowBytes := (rowBits + 7) / 8
 	comps := make([]float64, n)
-	if n == 1 && bpc <= 8 {
+	if n == 1 && bpc <= 8 && !r.bounded && r.onePerPixel(dict, resources) {
 		// One component of at most eight bits has at most 256 values, so what
 		// each one becomes is worked out once rather than at every pixel.
 		// Every sampled image in one corpus of 250 scanned documents is of
@@ -239,21 +327,24 @@ func (r *renderer) samples(dict reader.Dict, data []byte, w, h int, resources re
 		// The table is filled by the same decode and the same convert the
 		// loop below would have called, so it holds the same answers: this is
 		// a memo, not a second way of computing them.
-		var table [256]color.RGBA
+		pal := make([]color.RGBA, 256)
 		for raw := range 1 << bpc {
 			comps[0] = decode(0, uint32(raw), bpc)
-			table[raw] = sp.convert(comps)
+			c := sp.convert(comps)
+			// Alpha is 255 because that is what the four-byte loop below writes,
+			// whatever convert returned. The palette must hold the same answers.
+			pal[raw] = color.RGBA{R: c.R, G: c.G, B: c.B, A: 255}
 		}
+		out := &sampled{w: w, h: h, pix: make([]uint8, w*h), pal: pal}
 		for y := 0; y < h; y++ {
 			rowStart := y * rowBytes
 			for x := 0; x < w; x++ {
-				col := table[sampleAt(data, rowStart, x*bpc, bpc)]
-				i := (y*w + x) * 4
-				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+				out.pix[y*w+x] = uint8(sampleAt(data, rowStart, x*bpc, bpc))
 			}
 		}
 		return out
 	}
+	out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			for c := 0; c < n; c++ {
@@ -688,6 +779,7 @@ func (r *renderer) applySoftMask(s *sampled, stream *reader.Stream, resources re
 	if mask == nil {
 		return false
 	}
+	s.expand()
 	for y := 0; y < s.h; y++ {
 		for x := 0; x < s.w; x++ {
 			m := mask.at(x*mask.w/s.w, y*mask.h/s.h)
@@ -714,6 +806,7 @@ func (r *renderer) applyStencilMask(s *sampled, stream *reader.Stream, resources
 	if mask == nil {
 		return false
 	}
+	s.expand()
 	for y := 0; y < s.h; y++ {
 		for x := 0; x < s.w; x++ {
 			m := mask.at(x*mask.w/s.w, y*mask.h/s.h)

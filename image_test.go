@@ -543,3 +543,52 @@ func TestAMaskWhoseBytesAreStillEncodedIsNotDrawn(t *testing.T) {
 		})
 	}
 }
+
+// TestTheOneByteFormExpandsForAWriter tests a floor rather than a path: nothing
+// in the corpus reaches it, because onePerPixel refuses the one-byte form to any
+// picture that names a mask or is a stencil, and those are the only things that
+// write pixels. It is tested because the floor is what makes that argument safe
+// to be wrong about -- a palette is shared between pixels, so writing one pixel
+// through it would change every pixel that names the same entry.
+func TestTheOneByteFormExpandsForAWriter(t *testing.T) {
+	pal := make([]imgcolor.RGBA, 256)
+	pal[0] = imgcolor.RGBA{R: 10, G: 20, B: 30, A: 255}
+	pal[1] = imgcolor.RGBA{R: 200, G: 210, B: 220, A: 255}
+	s := &sampled{w: 2, h: 1, pix: []uint8{0, 1}, pal: pal}
+
+	// Before: one byte a pixel, read through the palette.
+	if got := s.at(0, 0); got != pal[0] {
+		t.Fatalf("at(0,0) = %+v", got)
+	}
+	if got := s.at(1, 0); got != pal[1] {
+		t.Fatalf("at(1,0) = %+v", got)
+	}
+
+	s.expand()
+	if s.pal != nil {
+		t.Error("the palette survived the expansion")
+	}
+	if len(s.pix) != 2*1*4 {
+		t.Fatalf("pix is %d bytes, want 8", len(s.pix))
+	}
+	// After: four bytes a pixel, and the same colours.
+	if got := s.at(0, 0); got != pal[0] {
+		t.Errorf("after expanding, at(0,0) = %+v", got)
+	}
+	if got := s.at(1, 0); got != pal[1] {
+		t.Errorf("after expanding, at(1,0) = %+v", got)
+	}
+
+	// And now a writer can change one pixel without touching the other, which
+	// is the whole reason the expansion exists.
+	paintStencil(s, imgcolor.RGBA{R: 1, G: 2, B: 3, A: 255})
+	if got := s.at(0, 0); got.R != 1 || got.A != 255 {
+		t.Errorf("paintStencil left %+v", got)
+	}
+
+	// Expanding twice is not an error and does not double the buffer.
+	s.expand()
+	if len(s.pix) != 8 {
+		t.Errorf("a second expansion made it %d bytes", len(s.pix))
+	}
+}

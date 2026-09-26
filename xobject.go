@@ -214,6 +214,7 @@ func (r *renderer) drawImageXObject(g *gstate, stream *reader.Stream, resources 
 
 // paintStencil fills in the colour a one-bit mask is drawn in.
 func paintStencil(s *sampled, c color.RGBA) {
+	s.expand()
 	for i := 0; i+3 < len(s.pix); i += 4 {
 		s.pix[i], s.pix[i+1], s.pix[i+2] = c.R, c.G, c.B
 	}
