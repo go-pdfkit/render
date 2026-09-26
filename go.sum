@@ -8,6 +8,8 @@ github.com/go-images/jpeg2000 v0.4.0 h1:oZPGRzeAvabi99qyC1kQDITQzH27iDw12Dg+c3vP
 github.com/go-images/jpeg2000 v0.4.0/go.mod h1:MwSmrbiP6RK7eLphoNyzY60BAXWOD+8LVdBYDPIBrN4=
 github.com/go-images/jpeg2000 v0.5.0 h1:9JGIm8ludjbDjFQCxo5tHwQ613ODuZKXVML75knRE9k=
 github.com/go-images/jpeg2000 v0.5.0/go.mod h1:MwSmrbiP6RK7eLphoNyzY60BAXWOD+8LVdBYDPIBrN4=
+github.com/go-images/jpeg2000 v0.6.0 h1:uPM8rM1TboG9hL5cxCE/9YiuTcEq0JRBTIdAD+P1gZc=
+github.com/go-images/jpeg2000 v0.6.0/go.mod h1:MwSmrbiP6RK7eLphoNyzY60BAXWOD+8LVdBYDPIBrN4=
 github.com/go-opentype/fonts v0.10.0 h1:9f7ik795SlBEJjz6iqBE/ZV2PaTauAj537MMWw9t4OQ=
 github.com/go-opentype/fonts v0.10.0/go.mod h1:b+o8v1zDZ6B3GixA398jGILAh09+WwfyoYz52zKe7DA=
 github.com/go-opentype/opentype v0.12.0 h1:wBlcDi+3ZaNZXEt5z+Ixr11/cYYwi5W+jX6yTl/qr1I=
