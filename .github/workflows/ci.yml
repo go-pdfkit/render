@@ -72,6 +72,12 @@ jobs:
           - { goarch: loong64, qemu: qemu-loongarch64-static }
           - { goarch: ppc64le, qemu: qemu-ppc64le-static }
           - { goarch: s390x,   qemu: qemu-s390x-static }
+          # 32-bit. Nothing here had ever been built for a 32-bit target,
+          # let alone run on one -- and a 32-bit `int` is where a pixel count
+          # that multiplies a width by a height stops fitting. poppler runs on
+          # 32-bit ARM every day; this is not exotic ground.
+          - { goarch: "386",   qemu: qemu-i386-static }
+          - { goarch: arm,     qemu: qemu-arm-static }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
