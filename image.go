@@ -129,7 +129,9 @@ func (r *renderer) decodeImage(dict reader.Dict, raw []byte, resources reader.Di
 func (r *renderer) decodeBase(dict reader.Dict, raw []byte, resources reader.Dict) *sampled {
 	w := int(intOr(resolve(r.doc, dict.Get("Width")), 0))
 	h := int(intOr(resolve(r.doc, dict.Get("Height")), 0))
-	if w <= 0 || h <= 0 || w*h > maxImagePixels {
+	// int64 for the same reason as in affordDecoded: these two numbers come
+	// out of the file, and their product does not fit a 32-bit int.
+	if w <= 0 || h <= 0 || int64(w)*int64(h) > maxImagePixels {
 		return nil
 	}
 	// An image whose filter chain broke part way gives the rows it managed,
@@ -530,22 +532,30 @@ func (r *renderer) affordDecoded(cw, ch, charged int) bool {
 		// the body either: the decoder gives up before it allocates.
 		return true
 	}
-	if cw > maxImagePixels || ch > maxImagePixels || cw*ch > maxImagePixels {
+	// In int64, because int is 32 bits on a 32-bit build and this product is
+	// two numbers out of a file: a codestream declaring 65 535 by 65 535 makes
+	// 4 294 836 225, which wraps to MINUS 131 071 in an int32 and walks
+	// straight through a ceiling written as `>`. Its sibling afford already
+	// said why, one file over. Either side alone is still refused first, so a
+	// width past the ceiling never reaches the multiplication at all.
+	if cw > maxImagePixels || ch > maxImagePixels || int64(cw)*int64(ch) > maxImagePixels {
 		return false
 	}
 	if !r.bounded {
 		return true
 	}
-	extra := cw*ch - charged
+	extra := int64(cw)*int64(ch) - int64(charged)
 	if extra <= 0 {
 		return true
 	}
-	if extra > r.budget {
+	if extra > int64(r.budget) {
 		r.refused = fmt.Errorf("%w: a picture whose codestream holds %d by %d pixels, with %d of the %d pixels left",
 			ErrTooMuchToDecode, cw, ch, r.budget, maxImagesPixels)
 		return false
 	}
-	r.budget -= extra
+	// extra is at most the budget here, and the budget is at most
+	// maxImagesPixels, so this fits an int on every build.
+	r.budget -= int(extra)
 	return true
 }
 

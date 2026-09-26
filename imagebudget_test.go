@@ -447,3 +447,31 @@ func TestAJPXCodestreamIsMeasuredBeforeItIsDecoded(t *testing.T) {
 		t.Error("the bytes were handed to the decoder anyway")
 	}
 }
+
+// TestAPageTooLargeToCountIsRefusedNotConverted is about int width rather than
+// about pictures, and it sits here beside the other ceilings for that reason.
+//
+// A MediaBox is a number in somebody's file and the scale is the caller's, so
+// the extent of a page is an arbitrary float. Converting a float too large for
+// an int is NOT DEFINED in Go: it does not give a large int, it gives whatever
+// the architecture does, and on a 32-bit build that is not even a big number.
+// So the ceiling has to be applied to the float, before the conversion --
+// otherwise the overflow happens first and there is nothing left to refuse.
+func TestAPageTooLargeToCountIsRefusedNotConverted(t *testing.T) {
+	for _, box := range [][4]float64{
+		{0, 0, 1e300, 1e300}, // past every int on every machine
+		{0, 0, 1e10, 1e10},   // 1e20 pixels: fits a float64, not an int64
+		{0, 0, 70000, 70000}, // 4.9e9: fits an int64, wraps an int32
+		{0, 0, 1e300, 10},    // one side alone
+	} {
+		d := onePage(t, box, "0 0 10 10 re f", nil)
+		img, err := Page(d, 1, Options{Scale: 1})
+		if err == nil {
+			t.Errorf("a page of %g by %g pixels was drawn, as %dx%d", box[2], box[3], img.W, img.H)
+			continue
+		}
+		if img != nil {
+			t.Errorf("a refused page of %g by %g came back with a %dx%d image", box[2], box[3], img.W, img.H)
+		}
+	}
+}

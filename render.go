@@ -116,14 +116,21 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 	s := opt.scale()
 	// A box with no extent is not a box, and a scale is never zero, so
 	// rounding up always leaves at least one pixel.
-	w := int(math.Ceil((box[2] - box[0]) * s))
-	h := int(math.Ceil((box[3] - box[1]) * s))
+	// The extent is judged as a float, BEFORE it becomes an int. A MediaBox is
+	// a number in somebody's file and the scale is the caller's, so this
+	// product can be any float at all -- and converting a float too large for
+	// an int is not defined in Go. On a 32-bit build it does not even give a
+	// large number, so the overflow would happen before the ceiling could
+	// refuse it.
+	wf := math.Ceil((box[2] - box[0]) * s)
+	hf := math.Ceil((box[3] - box[1]) * s)
 	if rotation == 90 || rotation == 270 {
-		w, h = h, w
+		wf, hf = hf, wf
 	}
-	if w*h > opt.maxPixels() {
-		return nil, fmt.Errorf("render: page %d would be %d by %d pixels, past the limit of %d", i, w, h, opt.maxPixels())
+	if wf*hf > float64(opt.maxPixels()) {
+		return nil, fmt.Errorf("render: page %d would be %.0f by %.0f pixels, past the limit of %d", i, wf, hf, opt.maxPixels())
 	}
+	w, h := int(wf), int(hf)
 	img := raster.New(w, h)
 	fill(img, opt.background())
 
