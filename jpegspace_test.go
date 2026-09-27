@@ -299,3 +299,175 @@ func TestAOneComponentJPEGIsConvertedOncePerLevelRatherThanOncePerPixel(t *testi
 			subject, witness, float64(subject)/float64(witness))
 	}
 }
+
+// rgbJPEGPage draws one RGB JPEG over a whole page of the same size, in the given
+// colour space. The picture is whatever fill writes into it.
+func rgbJPEGPage(t *testing.T, side int, space func(w *reader.Writer) reader.Object, fill func(x, y int) (uint8, uint8, uint8)) *reader.Document {
+	t.Helper()
+	src := image.NewRGBA(image.Rect(0, 0, side, side))
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			r, g, b := fill(x, y)
+			i := y*src.Stride + x*4
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = r, g, b, 255
+		}
+	}
+	var buf bytes.Buffer
+	// Lossless is not on offer, so the assertions below read the DECODED samples
+	// back rather than the ones written here.
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 100}); err != nil {
+		t.Fatal(err)
+	}
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	img := w.Add(&reader.Stream{Dict: reader.Dict{
+		"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+		"Width": reader.Integer(side), "Height": reader.Integer(side),
+		"ColorSpace": space(w), "BitsPerComponent": reader.Integer(8),
+		"Filter": reader.Name("DCTDecode"),
+	}, Raw: buf.Bytes()})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox":  nums(0, 0, float64(side), float64(side)),
+		"Resources": reader.Dict{"XObject": reader.Dict{"I": img}},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: []byte(fmt.Sprintf("q %d 0 0 %d 0 0 cm /I Do Q", side, side))})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// calRGB is a calibrated space whose conversion is not free, so it can witness
+// whether the samples went through it.
+func calRGB(*reader.Writer) reader.Object {
+	return reader.Array{reader.Name("CalRGB"), reader.Dict{
+		"WhitePoint": nums(0.9505, 1, 1.089),
+		"Gamma":      nums(2.2, 2.2, 2.2)}}
+}
+
+// TestTheTripleCacheDoesNotChangeAPicture.
+//
+// A three-component picture is cached on its sample triple, and the failure that
+// would matter is a cache answering for the wrong colour: the picture would be
+// wrong everywhere that colour appears, consistently, which no smoke test notices.
+//
+// The reference is the SAME code path with a cache that cannot be crowded: a one
+// by one picture of one colour has one triple in it, so what it draws is the
+// uncached truth for that triple. Every pixel of the large picture is compared
+// against the one-pixel answer for the triple that pixel actually holds, so the
+// JPEG's own lossiness cannot make this test lie.
+func TestTheTripleCacheDoesNotChangeAPicture(t *testing.T) {
+	const side = 64
+	// Distinct colours, spread so they do not land in one run of slots.
+	fill := func(x, y int) (uint8, uint8, uint8) {
+		v := y*side + x
+		return uint8(v * 7), uint8(v * 13), uint8(v * 29)
+	}
+	big := draw(t, rgbJPEGPage(t, side, calRGB, fill), Options{})
+
+	// What the decoder actually produced, so the reference is asked about the
+	// triples that reached the cache rather than the ones written into the file.
+	plain := draw(t, rgbJPEGPage(t, side, func(*reader.Writer) reader.Object {
+		return reader.Name("DeviceRGB")
+	}, fill), Options{})
+
+	// A one-pixel reference has to be ASKED what it decoded to. JPEG is lossy at
+	// every quality, so a file written with the triple 58,6,40 in it can come back
+	// as 56,5,39 -- and comparing against that would report a cache defect that is
+	// really the codec. The first version of this test did exactly that.
+	deviceRGB := func(*reader.Writer) reader.Object { return reader.Name("DeviceRGB") }
+	seen := map[[3]uint8][3]uint8{}
+	compared, skipped := 0, 0
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			s := plain.At(x, y)
+			key := [3]uint8{s.R, s.G, s.B}
+			want, known := seen[key]
+			if !known {
+				flat := func(int, int) (uint8, uint8, uint8) { return s.R, s.G, s.B }
+				// What the one-pixel file actually holds once decoded.
+				got := draw(t, rgbJPEGPage(t, 1, deviceRGB, flat), Options{}).At(0, 0)
+				if got.R != s.R || got.G != s.G || got.B != s.B {
+					seen[key] = [3]uint8{0, 0, 0}
+					skipped++
+					continue
+				}
+				// One triple, one slot, no crowding: the uncached answer.
+				c := draw(t, rgbJPEGPage(t, 1, calRGB, flat), Options{}).At(0, 0)
+				want = [3]uint8{c.R, c.G, c.B}
+				seen[key] = want
+			} else if want == [3]uint8{0, 0, 0} {
+				skipped++
+				continue
+			}
+			got := big.At(x, y)
+			if got.R != want[0] || got.G != want[1] || got.B != want[2] {
+				t.Fatalf("(%d,%d) sample %v: cached %d,%d,%d but uncached %v",
+					x, y, key, got.R, got.G, got.B, want)
+			}
+			compared++
+		}
+	}
+	if compared < 500 {
+		t.Errorf("only %d pixels could be compared (%d skipped because the one-pixel "+
+			"reference did not decode to the triple asked of it); the test is not "+
+			"exercising the cache", compared, skipped)
+	}
+}
+
+// TestAThreeComponentJPEGIsCachedOnItsSampleTriple pins the speed the cache is for.
+//
+// Sixteen million triples are not a memo, but a picture is not sixteen million
+// colours: the corpus's slowest remaining page, a 2313x2956 ICCBased RGB scan, has
+// 6 837 228 pixels and 208 801 distinct triples -- 3.05%, so 97 conversions in 100
+// are repeats. Cached, that page goes from 790 ms to 202 ms against poppler's 193.
+//
+// The bound is a ratio against DeviceRGB, whose samples pass straight through, and
+// the gamma on the calibrated space is explicit for the reason the one-component
+// test records: a calibrated space with no gamma converts for free and cannot
+// witness anything.
+func TestAThreeComponentJPEGIsCachedOnItsSampleTriple(t *testing.T) {
+	const side = 320
+	// Few distinct colours relative to the pixel count, which is what a scan looks
+	// like: 320x320 is 102 400 pixels over at most 4 096 triples here.
+	//
+	// The variation is in the LOW bits and red barely moves, which is also what a
+	// scan looks like -- a page of one ink under a lamp. A cache that indexed on
+	// the key's low bits alone would pile these into a few hundred slots and miss
+	// almost every time, so this fill is what makes the hash a tested decision
+	// rather than a comment.
+	fill := func(x, y int) (uint8, uint8, uint8) {
+		return uint8(200 + x%4), uint8(180 + y%8), uint8(x%16 + y%16*16)
+	}
+	deviceRGB := func(*reader.Writer) reader.Object { return reader.Name("DeviceRGB") }
+	draw(t, rgbJPEGPage(t, side, deviceRGB, fill), Options{})
+	draw(t, rgbJPEGPage(t, side, calRGB, fill), Options{})
+
+	best := func(space func(*reader.Writer) reader.Object) time.Duration {
+		d := rgbJPEGPage(t, side, space, fill)
+		out := time.Duration(1 << 62)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			draw(t, d, Options{})
+			if took := time.Since(start); took < out {
+				out = took
+			}
+		}
+		return out
+	}
+	witness := best(deviceRGB)
+	subject := best(calRGB)
+	if subject > 3*witness {
+		t.Errorf("a calibrated RGB JPEG took %v against DeviceRGB's %v (%.1fx); "+
+			"the colour space is being asked per pixel rather than per distinct triple",
+			subject, witness, float64(subject)/float64(witness))
+	}
+}
