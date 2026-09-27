@@ -599,7 +599,39 @@ func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
 	if cm, ok := img.(*image.CMYK); ok {
 		return cmykPicture(cm, w, h)
 	}
+	if s := adopted(img, w, h); s != nil {
+		return s
+	}
 	return &sampled{w: w, h: h, pix: raster.FromImage(img).Pix}
+}
+
+// adopted takes an *image.RGBA's own bytes instead of converting them, and
+// reports nil when that would not be the same picture.
+//
+// raster.FromImage converts rather than copies because image.RGBA is
+// PREMULTIPLIED and a raster.Image is straight -- but at an alpha of 255 the two
+// are the same bytes, and a JPEG 2000 codestream carries no alpha, so every pixel
+// the decoder writes is opaque. Then the conversion is a full pass over the image
+// and a second allocation the size of it: 0.11s and 12 MB on a scanned page of
+// this corpus, and 494 MB on its largest.
+//
+// Opaque() is what makes this safe rather than assumed. It reads one byte in four
+// and stops at the first pixel that is not opaque, so the cost of being wrong is a
+// scan, not a wrong picture. The stride and origin are checked because a raster
+// image is densely packed from (0,0) and a sub-image of a larger one is not.
+func adopted(img image.Image, w, h int) *sampled {
+	rgba, ok := img.(*image.RGBA)
+	if !ok {
+		return nil
+	}
+	b := rgba.Bounds()
+	if b.Min != (image.Point{}) || rgba.Stride != w*4 || b.Dx() != w || b.Dy() != h {
+		return nil
+	}
+	if len(rgba.Pix) < w*h*4 || !rgba.Opaque() {
+		return nil
+	}
+	return &sampled{w: w, h: h, pix: rgba.Pix[:w*h*4]}
 }
 
 // affordDecoded reports whether a picture of cw by ch pixels may be made.
