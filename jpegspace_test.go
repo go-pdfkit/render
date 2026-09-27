@@ -471,3 +471,186 @@ func TestAThreeComponentJPEGIsCachedOnItsSampleTriple(t *testing.T) {
 			subject, witness, float64(subject)/float64(witness))
 	}
 }
+
+// twoRGBJPEGPage draws the same RGB JPEG twice on one page, side by side, in two
+// different colour spaces. The samples are identical and the answers must not be.
+func twoRGBJPEGPage(t *testing.T, side int, left, right func(w *reader.Writer) reader.Object, fill func(x, y int) (uint8, uint8, uint8)) *reader.Document {
+	t.Helper()
+	src := image.NewRGBA(image.Rect(0, 0, side, side))
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			r, g, b := fill(x, y)
+			i := y*src.Stride + x*4
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = r, g, b, 255
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 100}); err != nil {
+		t.Fatal(err)
+	}
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	mk := func(space func(w *reader.Writer) reader.Object) reader.Object {
+		return w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(side), "Height": reader.Integer(side),
+			"ColorSpace": space(w), "BitsPerComponent": reader.Integer(8),
+			"Filter": reader.Name("DCTDecode"),
+		}, Raw: buf.Bytes()})
+	}
+	// The SAME bytes under two names, so nothing but the space differs.
+	content := fmt.Sprintf("q %d 0 0 %d 0 0 cm /L Do Q q %d 0 0 %d %d 0 cm /R Do Q",
+		side, side, side, side, side)
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": nums(0, 0, float64(2*side), float64(side)),
+		"Resources": reader.Dict{"XObject": reader.Dict{
+			"L": mk(left), "R": mk(right)}},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte(content)})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// TestASecondPictureDoesNotReadTheFirstsColours is the defect that a shared cache
+// creates and that a per-picture one could not: the table lives on the page now,
+// and what it holds depends on the COLOUR SPACE as well as on the sample triple.
+// Two pictures of the same bytes in different spaces must come out different.
+//
+// It is worth a fixture of its own because the failure is silent and total: every
+// pixel of the second picture would take the first picture's colour, consistently,
+// on a page that renders without complaint.
+func TestASecondPictureDoesNotReadTheFirstsColours(t *testing.T) {
+	const side = 48
+	fill := func(x, y int) (uint8, uint8, uint8) {
+		v := y*side + x
+		return uint8(v * 7), uint8(v * 13), uint8(v * 29)
+	}
+	gamma := func(g float64) func(*reader.Writer) reader.Object {
+		return func(*reader.Writer) reader.Object {
+			return reader.Array{reader.Name("CalRGB"), reader.Dict{
+				"WhitePoint": nums(0.9505, 1, 1.089), "Gamma": nums(g, g, g)}}
+		}
+	}
+	img := draw(t, twoRGBJPEGPage(t, side, gamma(2.2), gamma(1.0), fill), Options{})
+
+	// The two halves hold the same samples through different gammas, so they must
+	// differ on most pixels. A handful may coincide at the ends of the curve.
+	same, differ := 0, 0
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			l, r := img.At(x, y), img.At(side+x, y)
+			if l.R == r.R && l.G == r.G && l.B == r.B {
+				same++
+			} else {
+				differ++
+			}
+		}
+	}
+	if differ*4 < same {
+		t.Errorf("the two halves agree on %d of %d pixels; the second picture is "+
+			"reading the first's cached answers", same, same+differ)
+	}
+	// And the first half must still be what that space gives, so this cannot pass
+	// by drawing both halves wrong.
+	want := draw(t, rgbJPEGPage(t, side, gamma(2.2), fill), Options{})
+	for _, p := range [][2]int{{0, 0}, {side / 2, side / 3}, {side - 1, side - 1}} {
+		g, w := img.At(p[0], p[1]), want.At(p[0], p[1])
+		if g.R != w.R || g.G != w.G || g.B != w.B {
+			t.Errorf("first half at (%d,%d) is %d,%d,%d, alone it is %d,%d,%d",
+				p[0], p[1], g.R, g.G, g.B, w.R, w.G, w.B)
+		}
+	}
+}
+
+// manyTinyJPEGsPage draws n small three-component JPEGs on one page, which is the
+// shape that caught the cache out: fr-cerfa's cerfa_12626.pdf carries 4 606 images
+// on its first page and 2 112 of them are eight by one pixels.
+func manyTinyJPEGsPage(t *testing.T, n int, space func(w *reader.Writer) reader.Object) *reader.Document {
+	t.Helper()
+	src := image.NewRGBA(image.Rect(0, 0, 8, 1))
+	for x := 0; x < 8; x++ {
+		src.Pix[x*4], src.Pix[x*4+1], src.Pix[x*4+2], src.Pix[x*4+3] =
+			uint8(x*31), uint8(x*17), uint8(x*7), 255
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 100}); err != nil {
+		t.Fatal(err)
+	}
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	res := reader.Dict{}
+	content := ""
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("I%d", i)
+		res[reader.Name(name)] = w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(8), "Height": reader.Integer(1),
+			"ColorSpace": space(w), "BitsPerComponent": reader.Integer(8),
+			"Filter": reader.Name("DCTDecode"),
+		}, Raw: buf.Bytes()})
+		content += fmt.Sprintf("q 8 0 0 1 %d %d cm /%s Do Q ", i%40*8, i/40, name)
+	}
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox":  nums(0, 0, 320, 200),
+		"Resources": reader.Dict{"XObject": res},
+		"Contents":  w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte(content)})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// TestManySmallPicturesDoNotEachPayForTheTable is the regression, pinned.
+//
+// The cache was declared inside the loop that draws ONE picture, so every picture
+// allocated a table sized for a whole scan. cerfa_12626.pdf carries 4 606 images on
+// page 1 and went from 34.0 ms to 357.2 ms with identical pixels -- 10.5x, and the
+// -against check found it on its first real run.
+//
+// The bound is a ratio against DeviceRGB, whose samples pass straight through and
+// which therefore never reaches the cache at all. With one table per page the two
+// sit within a few percent; with one per picture the calibrated page pays a
+// four-megabyte allocation eight hundred times and is many times slower.
+func TestManySmallPicturesDoNotEachPayForTheTable(t *testing.T) {
+	const n = 800
+	deviceRGB := func(*reader.Writer) reader.Object { return reader.Name("DeviceRGB") }
+	draw(t, manyTinyJPEGsPage(t, n, deviceRGB), Options{})
+	draw(t, manyTinyJPEGsPage(t, n, calRGB), Options{})
+
+	best := func(space func(*reader.Writer) reader.Object) time.Duration {
+		d := manyTinyJPEGsPage(t, n, space)
+		out := time.Duration(1 << 62)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			draw(t, d, Options{})
+			if took := time.Since(start); took < out {
+				out = took
+			}
+		}
+		return out
+	}
+	witness := best(deviceRGB)
+	subject := best(calRGB)
+	if subject > 3*witness {
+		t.Errorf("%d small calibrated pictures took %v against DeviceRGB's %v (%.1fx); "+
+			"each picture is paying for its own cache", n, subject, witness,
+			float64(subject)/float64(witness))
+	}
+}
