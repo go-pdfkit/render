@@ -592,3 +592,70 @@ func TestTheOneByteFormExpandsForAWriter(t *testing.T) {
 		t.Errorf("a second expansion made it %d bytes", len(s.pix))
 	}
 }
+
+// TestAdoptionTakesOnlyWhatItMayTake covers each reason the decoder's own buffer
+// cannot be taken. Getting any of them wrong would not fail loudly: it would hand
+// back a picture whose alpha had been read as premultiplied when it was straight,
+// or one read past its own rows.
+func TestAdoptionTakesOnlyWhatItMayTake(t *testing.T) {
+	opaque := func(w, h int) *image.RGBA {
+		im := image.NewRGBA(image.Rect(0, 0, w, h))
+		for i := range im.Pix {
+			im.Pix[i] = 0xff
+		}
+		return im
+	}
+
+	// Taken: dense, from the origin, every pixel opaque.
+	im := opaque(3, 2)
+	got := adopted(im, 3, 2)
+	if got == nil {
+		t.Fatal("a dense opaque image was refused")
+	}
+	if &got.pix[0] != &im.Pix[0] {
+		t.Error("the bytes were copied rather than taken")
+	}
+
+	// Refused: not an *image.RGBA at all.
+	if adopted(image.NewGray(image.Rect(0, 0, 3, 2)), 3, 2) != nil {
+		t.Error("a grey image was adopted")
+	}
+
+	// Refused: one pixel is not opaque, so premultiplied is not straight.
+	tr := opaque(3, 2)
+	tr.Pix[4*4+3] = 0x80
+	if adopted(tr, 3, 2) != nil {
+		t.Error("an image with a translucent pixel was adopted")
+	}
+
+	// Refused: a sub-image, whose origin is not (0,0) and whose stride is its
+	// parent's.
+	parent := opaque(8, 8)
+	sub := parent.SubImage(image.Rect(2, 2, 5, 4)).(*image.RGBA)
+	if adopted(sub, 3, 2) != nil {
+		t.Error("a sub-image was adopted")
+	}
+
+	// Refused: the stride is wider than the rows, so the bytes are not dense.
+	padded := &image.RGBA{Pix: make([]uint8, 2*16), Stride: 16, Rect: image.Rect(0, 0, 3, 2)}
+	for i := range padded.Pix {
+		padded.Pix[i] = 0xff
+	}
+	if adopted(padded, 3, 2) != nil {
+		t.Error("a padded image was adopted")
+	}
+
+	// Refused: the dimensions asked for are not the ones it has.
+	if adopted(opaque(3, 2), 4, 2) != nil {
+		t.Error("an image of the wrong width was adopted")
+	}
+
+	// Refused: fewer bytes than the dimensions claim.
+	short := &image.RGBA{Pix: make([]uint8, 3*2*4-1), Stride: 12, Rect: image.Rect(0, 0, 3, 2)}
+	for i := range short.Pix {
+		short.Pix[i] = 0xff
+	}
+	if adopted(short, 3, 2) != nil {
+		t.Error("a short buffer was adopted")
+	}
+}
