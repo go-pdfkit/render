@@ -91,6 +91,22 @@ type renderer struct {
 	// state and uses it over and over.
 	softMasks map[softMaskKey][]uint8
 
+	// iccSpaces are the ICCBased spaces already read, by the object their
+	// profile came from.
+	//
+	// A file names one colour space and uses it everywhere, and reading an
+	// ICCBased one means decompressing the profile stream and parsing it. On one
+	// page of the corpus -- 2047_2047_5488.pdf, an 801 KB French tax form --
+	// colourSpace was entered 389 times, and TWO objects accounted for 235 of
+	// them: 155 and 80. The page spent 43% of its time in compress/flate,
+	// reading the same two profiles again and again, and took 775 ms against
+	// poppler's 95.
+	//
+	// The key is the profile stream's object number, so this cannot answer for
+	// the wrong profile. A declined profile is cached as nil, since declining it
+	// costs the same read.
+	iccSpaces map[int]*space
+
 	// masked is the buffer mask() writes into, kept so that a page does not
 	// allocate a coverage grid for every mark it makes through a clip. It is
 	// safe to reuse although paint() is re-entrant -- a pattern's tile draws
