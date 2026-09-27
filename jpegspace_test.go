@@ -7,9 +7,11 @@ package render
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"testing"
+	"time"
 
 	"github.com/go-pdfkit/reader"
 )
@@ -195,5 +197,105 @@ func TestADeviceNOfManyTintsOverAGreyJPEGIsLeftAlone(t *testing.T) {
 	}
 	if !isBlack(pic, 4, 4) {
 		t.Errorf("drew %s, want the codec's own output", pixel(pic, 4, 4))
+	}
+}
+
+// gradientJPEGPage is greyJPEGPage with every one of the 256 levels present, and
+// large enough that converting per pixel costs measurably more than converting
+// 256 times. A gradient rather than a flat fill so that a memo cannot be confused
+// with a shortcut for an image of one colour.
+func gradientJPEGPage(t *testing.T, side int, space func(w *reader.Writer) reader.Object) *reader.Document {
+	t.Helper()
+	src := image.NewGray(image.Rect(0, 0, side, side))
+	for y := 0; y < side; y++ {
+		for x := 0; x < side; x++ {
+			src.Pix[y*src.Stride+x] = uint8((x + y) % 256)
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 100}); err != nil {
+		t.Fatal(err)
+	}
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	img := w.Add(&reader.Stream{Dict: reader.Dict{
+		"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+		"Width": reader.Integer(side), "Height": reader.Integer(side),
+		"ColorSpace": space(w), "BitsPerComponent": reader.Integer(8),
+		"Filter": reader.Name("DCTDecode"),
+	}, Raw: buf.Bytes()})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox":  nums(0, 0, float64(side), float64(side)),
+		"Resources": reader.Dict{"XObject": reader.Dict{"I": img}},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: []byte(fmt.Sprintf("q %d 0 0 %d 0 0 cm /I Do Q", side, side))})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// TestAOneComponentJPEGIsConvertedOncePerLevelRatherThanOncePerPixel.
+//
+// An eight-bit sample has 256 possible values, so a calibrated space needs to be
+// asked 256 times and not once per pixel. Without that memo a DVLA form carrying
+// one 2480x3508 ICCBased grey scan -- 8.7 million pixels -- spent 72% of its time
+// in a math.Pow per sample, 535 ms against poppler's 159. With it the page takes
+// 66 ms, and the pixels are identical because 256 answers are ALL the answers.
+//
+// The bound is a RATIO against a witness the conversion does not touch: the same
+// picture in DeviceGray, whose samples pass straight through. A duration would pin
+// this machine's speed and a conversion count would need a hook in the space.
+//
+// THE GAMMA IS EXPLICIT AND THAT IS THE POINT. This test was first written with
+// `[/CalGray <<>>]` and it PASSED with the memo removed: a CalGray with no Gamma
+// converts for free, so it is the one calibrated space that cannot witness this
+// defect. Measured at 512 by 512, with the memo and without:
+//
+//	DeviceGray             4.35 ms    4.51 ms   (the witness)
+//	CalGray, no Gamma      4.40 ms    4.44 ms   <- sees nothing
+//	CalGray, Gamma 2.2     4.88 ms   47.59 ms   <- 9.8x
+//	Separation, exp N=2.4  4.73 ms   19.94 ms   <- 4.2x
+//
+// So the bound is 3x: the memoised page sits at 1.12x of the witness and the
+// unmemoised one at 10.9x, which leaves room on both sides without pinning either.
+func TestAOneComponentJPEGIsConvertedOncePerLevelRatherThanOncePerPixel(t *testing.T) {
+	const side = 512 // 262 144 pixels against 256 levels
+	device := func(*reader.Writer) reader.Object { return reader.Name("DeviceGray") }
+	calibrated := func(*reader.Writer) reader.Object {
+		return reader.Array{reader.Name("CalGray"), reader.Dict{
+			"WhitePoint": nums(0.9505, 1, 1.089), "Gamma": reader.Real(2.2)}}
+	}
+	// Drawn once each first, so neither timing pays for a cold cache the other
+	// does not.
+	draw(t, gradientJPEGPage(t, side, device), Options{})
+	draw(t, gradientJPEGPage(t, side, calibrated), Options{})
+
+	best := func(space func(*reader.Writer) reader.Object) time.Duration {
+		d := gradientJPEGPage(t, side, space)
+		out := time.Duration(1 << 62)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			draw(t, d, Options{})
+			if took := time.Since(start); took < out {
+				out = took
+			}
+		}
+		return out
+	}
+	witness := best(device)
+	subject := best(calibrated)
+	if subject > 3*witness {
+		t.Errorf("a calibrated grey JPEG took %v against DeviceGray's %v (%.1fx); "+
+			"the colour space is being asked per pixel rather than per level",
+			subject, witness, float64(subject)/float64(witness))
 	}
 }

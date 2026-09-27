@@ -575,13 +575,29 @@ func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources
 		if !ok {
 			return nil
 		}
+		// An eight-bit sample has 256 possible values, so 256 answers are ALL the
+		// answers: this memo is exact rather than an approximation, because both
+		// decode and sp.convert are functions of the sample alone.
+		//
+		// Without it this loop asked a colour space to convert every pixel one at
+		// a time. On a DVLA form carrying one 2480x3508 ICCBased grey scan --
+		// v55-5, 8.7 MILLION pixels -- that was 72% of the page: a math.Pow per
+		// sample through an ICC grey TRC, 535 ms against poppler's 159. The same
+		// memo exists in `samples` for the same reason, and `memoAndPack` states
+		// the condition (one component, eight bits or fewer); this path had simply
+		// never been given it.
+		var memo [256][4]uint8
+		for v := 0; v < 256; v++ {
+			comps[0] = decode(0, uint32(v), 8)
+			col := sp.convert(comps)
+			memo[v] = [4]uint8{col.R, col.G, col.B, 255}
+		}
 		b := img.Bounds()
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
-				comps[0] = decode(0, uint32(g.GrayAt(b.Min.X+x, b.Min.Y+y).Y), 8)
-				col := sp.convert(comps)
+				c := memo[g.GrayAt(b.Min.X+x, b.Min.Y+y).Y]
 				i := (y*w + x) * 4
-				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = c[0], c[1], c[2], c[3]
 			}
 		}
 	case sp.components == 3:
