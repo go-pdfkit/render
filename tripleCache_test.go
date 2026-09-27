@@ -86,7 +86,7 @@ func TestACacheWithNoRoomRefusesRatherThanOverwrites(t *testing.T) {
 	// Fill one run of maxProbes slots by hand.
 	_, _, _, _, at := c.lookup(1, 2, 3)
 	for i := 0; i < maxProbes; i++ {
-		c.slot[(at+i)&(cacheSlots-1)] = cacheUsed | uint64(i+1)
+		c.slot[(at+i)&(cacheSlots-1)] = c.gen<<genShift | uint64(i+1)
 	}
 	_, _, _, found, where := c.lookup(1, 2, 3)
 	if found {
@@ -112,5 +112,63 @@ func TestTheCacheIsAllocatedOnFirstUseAndNotBefore(t *testing.T) {
 	c.lookup(0, 0, 0)
 	if len(c.slot) != cacheSlots {
 		t.Errorf("after one lookup the table is %d slots, want %d", len(c.slot), cacheSlots)
+	}
+}
+
+// TestAnEarlierPicturesAnswersDoNotAnswerForThisOne. The table is shared across a
+// page, and what it caches depends on the colour space and the /Decode array as
+// well as on the triple: two pictures on one page may name different spaces. A
+// generation is what keeps the second from reading the first's answers, and the
+// alternative -- clearing four megabytes between pictures -- costs what allocating
+// them costs.
+func TestAnEarlierPicturesAnswersDoNotAnswerForThisOne(t *testing.T) {
+	var c tripleCache
+	c.nextImage()
+	_, _, _, _, at := c.lookup(7, 8, 9)
+	c.store(at, 7, 8, 9, 1, 2, 3)
+	if _, _, _, found, _ := c.lookup(7, 8, 9); !found {
+		t.Fatal("the first picture could not read its own answer")
+	}
+	c.nextImage()
+	if _, _, _, found, _ := c.lookup(7, 8, 9); found {
+		t.Error("the second picture read the first picture's answer")
+	}
+	// And it must still be usable: a stale slot is free, not poisoned.
+	_, _, _, _, at2 := c.lookup(7, 8, 9)
+	c.store(at2, 7, 8, 9, 9, 8, 7)
+	r, g, b, found, _ := c.lookup(7, 8, 9)
+	if !found || r != 9 || g != 8 || b != 7 {
+		t.Errorf("second picture got %d,%d,%d (found %v), want 9,8,7", r, g, b, found)
+	}
+}
+
+// TestAGenerationThatWouldWrapStartsOver. The generation shares its word with the
+// key and the answer, so it cannot grow for ever: a wrapped generation would let an
+// ancient slot answer for a picture that never wrote it, and a wrong colour is
+// worse than a dropped cache.
+func TestAGenerationThatWouldWrapStartsOver(t *testing.T) {
+	var c tripleCache
+	c.gen = maxGen
+	_, _, _, _, at := c.lookup(1, 1, 1)
+	c.store(at, 1, 1, 1, 5, 5, 5)
+	c.nextImage()
+	if c.gen != 1 {
+		t.Errorf("generation is %d after wrapping, want 1", c.gen)
+	}
+	if c.slot != nil {
+		t.Error("the table was kept across a wrap, so generation 1 can read generation 1's slots")
+	}
+	if _, _, _, found, _ := c.lookup(1, 1, 1); found {
+		t.Error("a slot written before the wrap answered after it")
+	}
+}
+
+// TestAPageWithNoSuchPictureNeverAllocates, which is the other half of the
+// regression: 4 MB is cheap once a page and ruinous once a picture.
+func TestAPageWithNoSuchPictureNeverAllocates(t *testing.T) {
+	var c tripleCache
+	c.nextImage()
+	if c.slot != nil {
+		t.Error("starting a picture allocated the table before anything was looked up")
 	}
 }

@@ -115,6 +115,13 @@ type renderer struct {
 	// state and uses it over and over.
 	softMasks map[softMaskKey][]uint8
 
+	// triples caches what a colour space made of a three-byte sample triple, for
+	// the page rather than for one picture: see tripleCache for the 10.5x
+	// regression that taught the difference. Each picture takes a generation, so
+	// nothing is cleared between them and a page with no such picture never
+	// allocates the table at all.
+	triples tripleCache
+
 	// iccSpaces are the ICCBased spaces already read, by the object their
 	// profile came from.
 	//

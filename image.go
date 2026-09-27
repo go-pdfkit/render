@@ -611,7 +611,13 @@ func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources
 		// Cached on the sample triple: 16.7 million triples are not a memo, but a
 		// picture is not 16.7 million colours. See tripleCache for what was counted
 		// and for the two cheaper caches that were measured and are too weak.
-		var cache tripleCache
+		//
+		// The table belongs to the renderer and this picture takes a generation of
+		// it, because the answer depends on the colour space and the /Decode array
+		// as well as on the triple, and two pictures on one page may differ in
+		// both.
+		cache := &r.triples
+		cache.nextImage()
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
 				i := (y*w + x) * 4
