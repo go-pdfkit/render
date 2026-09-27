@@ -659,3 +659,65 @@ func TestAdoptionTakesOnlyWhatItMayTake(t *testing.T) {
 		t.Error("a short buffer was adopted")
 	}
 }
+
+// TestTheMemoDoesNotDependOnThePacking is a regression test for a defect shipped
+// in v0.49.0 and found only by TIMING the corpus: the 256-entry memo was gated on
+// the predicate that decides whether a picture may be held as one byte, and that
+// predicate refuses a picture with a soft mask. So a masked grey picture converted
+// every pixel instead of 256 values -- two forms went from 32 ms to 369 ms with
+// byte-identical output, which no proof of pixels can see.
+func TestTheMemoDoesNotDependOnThePacking(t *testing.T) {
+	for _, c := range []struct {
+		name                 string
+		n, bpc               int
+		bounded, mayPack     bool
+		wantMemo, wantPacked bool
+	}{
+		{"grey, nothing in the way", 1, 8, false, true, true, true},
+		{"grey WITH A MASK: memo yes, packed no", 1, 8, false, false, true, false},
+		{"grey on the extraction path: memo yes, packed no", 1, 8, true, true, true, false},
+		{"grey at 1 bit with a mask", 1, 1, false, false, true, false},
+		{"three components: neither", 3, 8, false, true, false, false},
+		{"sixteen bits: neither", 1, 16, false, true, false, false},
+	} {
+		memo, packed := memoAndPack(c.n, c.bpc, c.bounded, c.mayPack)
+		if memo != c.wantMemo || packed != c.wantPacked {
+			t.Errorf("%s: memo=%v packed=%v, want memo=%v packed=%v",
+				c.name, memo, packed, c.wantMemo, c.wantPacked)
+		}
+	}
+	// The property, stated once: packing may be refused, and the memo survives it.
+	if memo, _ := memoAndPack(1, 8, false, false); !memo {
+		t.Error("refusing the packed form took the memo with it")
+	}
+}
+
+// TestTheLooseGuardIsTightenedWhereTheCostIsKnown covers the second half of the
+// two-stage ceiling. decodeBase cannot know how many components a picture has
+// without building its colour space, which for an Indexed space over an ICC
+// profile is expensive enough to have cost an eleven-fold regression once. So it
+// bounds LOOSELY, at one byte a pixel, and samples() -- which has the space in
+// hand already -- applies the real cost.
+//
+// A picture of 9 000 by 9 000 in three components is 81 megapixels: inside the
+// loose bound of 268, and 324 MB at four bytes a pixel, which is past the 256 MB
+// the ceiling promises.
+func TestTheLooseGuardIsTightenedWhereTheCostIsKnown(t *testing.T) {
+	d := pageWithImage(t, reader.Dict{
+		"Width": reader.Integer(9000), "Height": reader.Integer(9000),
+		"BitsPerComponent": reader.Integer(8),
+		"ColorSpace":       reader.Name("DeviceRGB"),
+	}, []byte("not the whole picture, and it does not have to be"), "")
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img == nil {
+		t.Fatal("the page came back as nothing")
+	}
+	// The page is drawn; the picture is not. Nothing to assert about the pixels
+	// beyond that it did not allocate 324 MB to find out.
+	if isWhite(img, 2, 2) != true {
+		t.Error("something was drawn where the refused picture would have gone")
+	}
+}

@@ -147,14 +147,47 @@ const maxImageBytes = 256 << 20
 // colour whatever it holds.
 const maxImagePixels = maxImageBytes / 4
 
-// onePerPixel says whether a picture may be held as one byte a pixel and a
-// palette. It is asked twice -- once to bound the memory before any of it is
-// spent, and once to choose the form -- so it must answer the same both times.
+// memoAndPack decides the two things samples() has to decide, and it is a
+// function of its own because conflating them was a defect.
 //
-// A single component of at most eight bits has at most 256 values, so a palette
-// says everything. A picture that names a mask or IS one is refused the form
-// because applying a mask writes pixels, and a palette is shared.
-func (r *renderer) onePerPixel(dict reader.Dict, resources reader.Dict) bool {
+// memo says a table of 256 answers can replace a conversion at every pixel. It
+// depends on the picture's SAMPLES and nothing else: one component of at most
+// eight bits has at most 256 values.
+//
+// packed says the picture may additionally be HELD as one byte a pixel and that
+// table. It depends on what will happen to the picture LATER -- nothing may write
+// to its pixels, since a palette is shared between them.
+//
+// v0.49.0 made memo depend on packed. A single-component picture with a soft mask
+// is refused the packed form, so it lost the memo too and went back to converting
+// every pixel: two forms of the corpus went from 32 ms to 369 ms with
+// byte-identical output. A proof of pixels cannot see that, and it took timing the
+// whole corpus to find it.
+func memoAndPack(n, bpc int, bounded, mayPack bool) (memo, packed bool) {
+	memo = n == 1 && bpc <= 8
+	return memo, memo && !bounded && mayPack
+}
+
+// mayPackOneByte says whether a picture MIGHT be held as one byte a pixel and a
+// palette, asking only what is cheap to ask.
+//
+// It deliberately does NOT build the colour space. The first version of this
+// predicate ended with
+//
+//	return r.colourSpace(dict.Get("ColorSpace"), resources, 0).components == 1
+//
+// which reads as a component count and is nothing of the kind: for an Indexed
+// space over an ICC profile, constructing it parses the profile and builds the
+// transform. Called twice per picture on top of the one samples() already does,
+// that took two French forms from 32ms to 363ms -- an ELEVEN-FOLD regression with
+// byte-identical output, which a corpus proof of pixels cannot see.
+//
+// So the cheap half is asked here, to bound the memory before any is spent, and
+// the component count is read in samples() from the space it has already built.
+//
+// A picture that names a mask or IS one is refused the packed form: applying a
+// mask writes pixels, and a palette is shared between them.
+func (r *renderer) mayPackOneByte(dict reader.Dict) bool {
 	bpc := int(intOr(resolve(r.doc, dict.Get("BitsPerComponent")), 8))
 	if bpc > 8 {
 		return false
@@ -164,17 +197,14 @@ func (r *renderer) onePerPixel(dict reader.Dict, resources reader.Dict) bool {
 	}
 	// Asked the way applyTransparency asks it -- resolve, then try to convert.
 	// Dict.Get returns Null{} for a key that is not there, NEVER nil, so
-	// `dict.Get("SMask") != nil` is true of every dictionary in every file: the
-	// first version of this predicate was written that way and was therefore
-	// always false, which made the whole change inert and looked exactly like
-	// the ceiling still refusing the page.
+	// `dict.Get("SMask") != nil` is true of every dictionary in every file.
 	if _, ok := reader.ToStream(resolve(r.doc, dict.Get("SMask"))); ok {
 		return false
 	}
 	if _, ok := reader.ToStream(resolve(r.doc, dict.Get("Mask"))); ok {
 		return false
 	}
-	return r.colourSpace(dict.Get("ColorSpace"), resources, 0).components == 1
+	return true
 }
 
 // decodeImage turns an image XObject into the grid of colours a page draws:
@@ -216,8 +246,13 @@ func (r *renderer) decodeBase(dict reader.Dict, raw []byte, resources reader.Dic
 	// through raster.Image and so expands them to four bytes a pixel. Budget
 	// what that path will really spend, or the ceiling would promise 256 MB and
 	// the expansion would take 333.
+	// mayPackOneByte does not know how many components there are, so this is a
+	// LOWER bound on the cost: a picture it admits may still turn out to need
+	// four bytes a pixel, and samples() checks the real cost against the same
+	// ceiling once it knows. Bounding loosely here and exactly there is what
+	// keeps the expensive question out of the guard.
 	bpp := int64(4)
-	if !r.bounded && r.onePerPixel(dict, resources) {
+	if !r.bounded && r.mayPackOneByte(dict) {
 		bpp = 1
 	}
 	if w <= 0 || h <= 0 || int64(w)*int64(h)*bpp > maxImageBytes {
@@ -318,28 +353,61 @@ func (r *renderer) samples(dict reader.Dict, data []byte, w, h int, resources re
 	rowBits := w * n * bpc
 	rowBytes := (rowBits + 7) / 8
 	comps := make([]float64, n)
-	if n == 1 && bpc <= 8 && !r.bounded && r.onePerPixel(dict, resources) {
-		// One component of at most eight bits has at most 256 values, so what
-		// each one becomes is worked out once rather than at every pixel.
-		// Every sampled image in one corpus of 250 scanned documents is of
-		// this shape, and they are 2.05 BILLION pixels between them.
+	// The real cost is known now: n components at bpc bits become either one
+	// byte a pixel and a palette, or four. decodeBase bounded this loosely
+	// without the colour space; this is the same ceiling, exactly.
+	// TWO DECISIONS, and conflating them cost eleven-fold on two forms of this
+	// corpus with byte-identical output.
+	//
+	// The first is whether a table of 256 answers can replace a conversion at
+	// every pixel: that needs only one component of at most eight bits, and it
+	// is worth having whatever else is true of the picture. Every sampled image
+	// in one corpus of 250 scanned documents is of this shape, 2.05 BILLION
+	// pixels between them.
+	//
+	// The second is whether the picture may then be HELD as one byte a pixel and
+	// that table. That needs more -- nothing may write to its pixels later, since
+	// a palette is shared between them -- and gating the TABLE on it was the
+	// mistake: a single-component picture with a soft mask lost its memo and went
+	// back to converting 3.93 million pixels one at a time.
+	memo, packed := memoAndPack(n, bpc, r.bounded, r.mayPackOneByte(dict))
+	cost := int64(4)
+	if packed {
+		cost = 1
+	}
+	if int64(w)*int64(h)*cost > maxImageBytes {
+		return nil
+	}
+	if memo {
+		// The table is filled by the same decode and the same convert the loop
+		// below would have called, so it holds the same answers: this is a memo,
+		// not a second way of computing them.
 		//
-		// The table is filled by the same decode and the same convert the
-		// loop below would have called, so it holds the same answers: this is
-		// a memo, not a second way of computing them.
+		// Alpha is 255 because that is what the four-byte loop below writes,
+		// whatever convert returned.
 		pal := make([]color.RGBA, 256)
 		for raw := range 1 << bpc {
 			comps[0] = decode(0, uint32(raw), bpc)
 			c := sp.convert(comps)
-			// Alpha is 255 because that is what the four-byte loop below writes,
-			// whatever convert returned. The palette must hold the same answers.
 			pal[raw] = color.RGBA{R: c.R, G: c.G, B: c.B, A: 255}
 		}
-		out := &sampled{w: w, h: h, pix: make([]uint8, w*h), pal: pal}
+		if packed {
+			out := &sampled{w: w, h: h, pix: make([]uint8, w*h), pal: pal}
+			for y := 0; y < h; y++ {
+				rowStart := y * rowBytes
+				for x := 0; x < w; x++ {
+					out.pix[y*w+x] = uint8(sampleAt(data, rowStart, x*bpc, bpc))
+				}
+			}
+			return out
+		}
+		out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
 		for y := 0; y < h; y++ {
 			rowStart := y * rowBytes
 			for x := 0; x < w; x++ {
-				out.pix[y*w+x] = uint8(sampleAt(data, rowStart, x*bpc, bpc))
+				col := pal[sampleAt(data, rowStart, x*bpc, bpc)]
+				i := (y*w + x) * 4
+				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
 			}
 		}
 		return out
