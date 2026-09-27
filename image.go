@@ -608,14 +608,24 @@ func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources
 		// mean, which for a calibrated space is a gamma, a matrix and an
 		// adaptation rather than nothing at all.
 		src := jpegPixels(img)
+		// Cached on the sample triple: 16.7 million triples are not a memo, but a
+		// picture is not 16.7 million colours. See tripleCache for what was counted
+		// and for the two cheaper caches that were measured and are too weak.
+		var cache tripleCache
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
 				i := (y*w + x) * 4
-				for c := 0; c < 3; c++ {
-					comps[c] = decode(c, uint32(src.Pix[i+c]), 8)
+				sr, sg, sb := src.Pix[i], src.Pix[i+1], src.Pix[i+2]
+				cr, cg, cb, ok, at := cache.lookup(sr, sg, sb)
+				if !ok {
+					comps[0] = decode(0, uint32(sr), 8)
+					comps[1] = decode(1, uint32(sg), 8)
+					comps[2] = decode(2, uint32(sb), 8)
+					col := sp.convert(comps)
+					cr, cg, cb = col.R, col.G, col.B
+					cache.store(at, sr, sg, sb, cr, cg, cb)
 				}
-				col := sp.convert(comps)
-				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = cr, cg, cb, 255
 			}
 		}
 	default:
