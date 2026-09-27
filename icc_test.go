@@ -313,3 +313,97 @@ func TestAnICCSpaceWithNothingAfterItsName(t *testing.T) {
 		t.Errorf("an unreadable profile with no /N did not fall back to DeviceRGB")
 	}
 }
+
+// iccDocWith builds a document whose only content is an ICC profile stream, and
+// hands back a renderer WITH the cache and the reference to that stream.
+func iccDocWith(t *testing.T, profile []byte, n int) (*renderer, reader.Object) {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	dict := reader.Dict{}
+	if n > 0 {
+		dict["N"] = reader.Integer(n)
+	}
+	ref := w.Add(&reader.Stream{Dict: dict, Raw: profile})
+	pagesRef := w.Reserve()
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox": nums(0, 0, 4, 4),
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{}, Raw: []byte("")})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &renderer{doc: d, iccSpaces: map[int]*space{}}, ref
+}
+
+// TestAProfileIsReadOncePerObject is the regression test for the largest defect
+// §24's per-page timings found.
+//
+// A file names one ICCBased space and uses it everywhere, and reading one means
+// decompressing its profile stream and parsing it. On 2047_2047_5488.pdf, an 801 KB
+// French tax form, colourSpace was entered 389 times and TWO objects accounted for
+// 235 of them; 43% of the page went into compress/flate, reading the same two
+// profiles again and again. It took 735.9 ms against poppler's 94.8 ms, and 26.2 ms
+// once each profile was read once.
+//
+// A cache hit is observable without counting: it returns the SAME *space. That is
+// what this asserts, rather than a duration, which would be the machine's speed.
+func TestAProfileIsReadOncePerObject(t *testing.T) {
+	r, ref := iccDocWith(t, appleRGBProfile(), 3)
+	arr := reader.Array{reader.Name("ICCBased"), ref}
+
+	first := r.colourSpaceArray("ICCBased", arr, nil, 0)
+	if first == nil || first.name != "ICCBased" {
+		t.Fatalf("the profile was not read at all: %+v", first)
+	}
+	second := r.colourSpaceArray("ICCBased", arr, nil, 0)
+	if first != second {
+		t.Error("the same profile object was read twice")
+	}
+	if len(r.iccSpaces) != 1 {
+		t.Errorf("the cache holds %d entries, want 1", len(r.iccSpaces))
+	}
+
+	// A profile this package declines is cached too, because declining it costs
+	// the same read. Its entry is nil and the caller falls back on /N.
+	rd, bad := iccDocWith(t, []byte("not a profile at all"), 3)
+	badArr := reader.Array{reader.Name("ICCBased"), bad}
+	a := rd.colourSpaceArray("ICCBased", badArr, nil, 0)
+	b := rd.colourSpaceArray("ICCBased", badArr, nil, 0)
+	if a == nil || a.components != 3 {
+		t.Fatalf("a declined profile gave %+v, want three components from /N", a)
+	}
+	if len(rd.iccSpaces) != 1 {
+		t.Errorf("a declined profile left %d cache entries, want 1", len(rd.iccSpaces))
+	}
+	if b == nil || b.components != 3 {
+		t.Errorf("the second read of a declined profile gave %+v", b)
+	}
+}
+
+// TestAnInlineProfileHasNoKey: a profile written into the array rather than
+// referenced cannot be cached, because there is nothing to key it by. It is read
+// every time, which is what it did before and is what a one-off costs.
+func TestAnInlineProfileHasNoKey(t *testing.T) {
+	r, ref := iccDocWith(t, appleRGBProfile(), 3)
+	// Resolve the reference into the object itself, so the array holds no Ref.
+	inline := resolve(r.doc, ref)
+	arr := reader.Array{reader.Name("ICCBased"), inline}
+	first := r.colourSpaceArray("ICCBased", arr, nil, 0)
+	second := r.colourSpaceArray("ICCBased", arr, nil, 0)
+	if first == nil || second == nil {
+		t.Fatal("an inline profile was not read")
+	}
+	if first == second {
+		t.Error("an inline profile was cached, and there is no key that could be right")
+	}
+	if len(r.iccSpaces) != 0 {
+		t.Errorf("an inline profile left %d cache entries", len(r.iccSpaces))
+	}
+}

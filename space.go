@@ -135,7 +135,8 @@ func (r *renderer) colourSpaceArray(family reader.Name, arr reader.Array, resour
 		if len(arr) > 1 {
 			if st, ok := reader.ToStream(resolve(r.doc, arr[1])); ok {
 				n, _ := reader.ToInt(resolve(r.doc, st.Dict.Get("N")))
-				if sp := r.iccSpace(st, int(n)); sp != nil {
+				sp := r.iccCached(arr[1], st, int(n))
+				if sp != nil {
 					return sp
 				}
 				if n > 0 {
@@ -269,4 +270,25 @@ func (r *renderer) separationSpace(family reader.Name, arr reader.Array, resourc
 		g := byteOf(1 - tint)
 		return color.RGBA{R: g, G: g, B: g, A: 255}
 	}}
+}
+
+// iccCached reads an ICCBased profile once per object.
+//
+// Reading one means decompressing the stream and parsing it, and a file names the
+// same space everywhere: see renderer.iccSpaces for what that cost on one page.
+// The key is the object the profile came from, so a hit cannot be another
+// profile's. An entry written inline rather than by reference has no key and is
+// read every time, which is the same as before and is cheap in practice -- an
+// inline profile is one document's one-off.
+func (r *renderer) iccCached(entry reader.Object, st *reader.Stream, n int) *space {
+	ref, ok := entry.(reader.Ref)
+	if !ok || r.iccSpaces == nil {
+		return r.iccSpace(st, n)
+	}
+	if sp, seen := r.iccSpaces[ref.Num]; seen {
+		return sp
+	}
+	sp := r.iccSpace(st, n)
+	r.iccSpaces[ref.Num] = sp
+	return sp
 }

@@ -156,7 +156,8 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 	}
 	content := dec.Data
 	resources, _ := d.GetDict(page, "Resources")
-	r := &renderer{doc: d, img: img, fonts: map[int]*pdfFont{}, softMasks: map[softMaskKey][]uint8{}}
+	r := &renderer{doc: d, img: img, fonts: map[int]*pdfFont{},
+		softMasks: map[softMaskKey][]uint8{}, iccSpaces: map[int]*space{}}
 	if !opt.AllLayers {
 		r.oc = readOptional(d)
 	}

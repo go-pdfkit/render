@@ -103,6 +103,7 @@ func Images(d *reader.Document, i int) ([]Image, error) {
 		doc:       d,
 		fonts:     map[int]*pdfFont{},
 		softMasks: map[softMaskKey][]uint8{},
+		iccSpaces: map[int]*space{},
 		seen:      map[reader.Ref]bool{},
 		budget:    maxImagesPixels,
 		bounded:   true,
