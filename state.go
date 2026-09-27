@@ -74,6 +74,30 @@ type renderer struct {
 
 	// depth bounds how far one form may draw another.
 	depth int
+
+	// drawingProcs holds the object numbers of the Type 3 glyph procedures
+	// currently being drawn, so that one cannot draw itself.
+	//
+	// A depth bound is the wrong instrument for this, and the corpus says so.
+	// gh-safedocs' ContentStreamCycleType3insideType3.pdf is 2.4 KB and was the
+	// slowest page of 3 208: 1 897 ms against poppler's 51 ms, 37x. Nothing was
+	// unbounded -- maxFormDepth stopped the recursion at 12 and maxOperations at
+	// 4.19 million marks -- but a depth bound is EXPONENTIAL IN BREADTH. A glyph
+	// procedure that shows three glyphs of its own font runs 3^12 times, so the
+	// page spent its whole operation budget and the 1.9 s WAS that budget.
+	//
+	// Refusing re-entry makes it linear: each procedure runs at most once per
+	// chain. poppler does exactly this (Gfx.cc, charProcDrawing), and the reason
+	// to follow it here is that it is the narrow fix -- a cycle has no meaning,
+	// while a file may legitimately show the same glyph twice in a row, which a
+	// set that empties on the way out still allows.
+	//
+	// A slice rather than a map because maxFormDepth caps it at 12 entries, and
+	// scanning twelve ints beats allocating a map on every page that has a Type 3
+	// font. Only a procedure reached through a reference can be named this way; a
+	// direct stream has no object number and keeps the depth bound alone, which
+	// is also where poppler leaves it.
+	drawingProcs []int
 	// tm is where the next glyph goes and tlm where the current line
 	// began; both belong to the page rather than to the graphics state,
 	// which is what the specification says.

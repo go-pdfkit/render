@@ -259,9 +259,24 @@ func (r *renderer) drawType3Glyph(g *gstate, f *pdfFont, code int, resources rea
 	if !ok || f.CharProcs() == nil || r.depth >= maxFormDepth {
 		return
 	}
-	stream, ok := reader.ToStream(resolve(r.doc, f.CharProcs().Get(reader.Name(name))))
+	entry := f.CharProcs().Get(reader.Name(name))
+	stream, ok := reader.ToStream(resolve(r.doc, entry))
 	if !ok {
 		return
+	}
+	// A glyph procedure that is already being drawn is a cycle, and a cycle has
+	// no meaning: refuse it rather than let the depth bound turn it into 3^12
+	// executions. Only a procedure named by a reference can be recognised, and
+	// the number leaves the list on the way out, so showing the same glyph twice
+	// in sequence is still allowed.
+	if ref, isRef := entry.(reader.Ref); isRef {
+		for _, num := range r.drawingProcs {
+			if num == ref.Num {
+				return
+			}
+		}
+		r.drawingProcs = append(r.drawingProcs, ref.Num)
+		defer func() { r.drawingProcs = r.drawingProcs[:len(r.drawingProcs)-1] }()
 	}
 	content, img, err := r.salvaged(stream)
 	if err != nil || img != "" {
