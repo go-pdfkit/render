@@ -19,6 +19,31 @@ type pdfFont struct {
 	face    *opentype.Face
 	perEm   float64
 
+	// outlines are the glyphs already read from the face, by glyph index.
+	//
+	// An outline is in FONT UNITS, so it does not depend on the size a glyph is
+	// drawn at or on the transform that places it: the index is the whole key.
+	// Without this, the face was asked again for every occurrence --
+	// AcroFormsBasicFields.pdf, a 167 KB form, asked 145 543 times for 95 distinct
+	// glyphs, and cerfa_10702.pdf 149 589 times for 395. Reading them was 638 MB of
+	// the 1.58 GB that page allocated, and the garbage that made was 22% of the
+	// profile.
+	//
+	// Not bounded by eviction, unlike poppler's, and the difference is what is
+	// cached: poppler keeps rasterised BITMAPS, whose size grows with the matrix,
+	// so it holds an 8-way set-associative table sized by glyph area
+	// (SplashFont.cc). An outline is a few hundred bytes and there are only as many
+	// as the font has glyphs, of which only those drawn are ever read.
+	//
+	// The slices are handed out as they are. Nothing in this package writes to an
+	// outline it was given, and a caller that did would corrupt every later
+	// drawing of that glyph.
+	outlines map[opentype.GlyphIndex][]opentype.Segment
+	// missing are the glyph indices the face has no outline for, kept apart so
+	// that a failed read is not repeated either -- a page that shows a glyph the
+	// font does not carry shows it as often as any other.
+	missing map[opentype.GlyphIndex]bool
+
 	// fontMatrix is a Type 3 font's glyph space, as a transform.
 	fontMatrix geometry.Matrix
 
@@ -52,7 +77,26 @@ func (f *pdfFont) glyph(code int) ([]opentype.Segment, bool) {
 	if f.face == nil {
 		return nil, false
 	}
-	return f.face.GlyphOutline(f.glyphIndex(code))
+	gi := f.glyphIndex(code)
+	if segs, ok := f.outlines[gi]; ok {
+		return segs, true
+	}
+	if f.missing[gi] {
+		return nil, false
+	}
+	segs, ok := f.face.GlyphOutline(gi)
+	if !ok {
+		if f.missing == nil {
+			f.missing = map[opentype.GlyphIndex]bool{}
+		}
+		f.missing[gi] = true
+		return nil, false
+	}
+	if f.outlines == nil {
+		f.outlines = map[opentype.GlyphIndex][]opentype.Segment{}
+	}
+	f.outlines[gi] = segs
+	return segs, true
 }
 
 // glyphIndex works out which glyph of the font program a code stands for.
