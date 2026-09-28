@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"sync"
 
 	"github.com/go-gfx/gfx/geometry"
 	"github.com/go-gfx/gfx/raster"
@@ -700,11 +701,53 @@ func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
 	if cm, ok := img.(*image.CMYK); ok {
 		return r.cmykPicture(cm, w, h)
 	}
+	if s := adoptedGrey(img, w, h); s != nil {
+		return s
+	}
 	if s := adopted(img, w, h); s != nil {
 		return s
 	}
 	return &sampled{w: w, h: h, pix: raster.FromImage(img).Pix}
 }
+
+// adoptedGrey takes an *image.Gray's own bytes as the PACKED form, with a palette
+// of the 256 greys.
+//
+// A JPEG 2000 codestream of one component used to come back as an *image.RGBA and
+// be adopted at four bytes a pixel. Most of a scanned corpus is that shape, and the
+// four-byte form is what puts its largest pages over the ceiling: 9 449 by 13 701 is
+// 123 MB here and 494 MB there.
+//
+// The palette is the same answer the four-byte path wrote -- grey v is
+// {v, v, v, 255} -- so the picture is unchanged; it is held differently. One table
+// of 256 entries is shared by every such picture on the page, since it depends on
+// nothing but the level.
+//
+// The same checks as adopted(), and for the same reason: a raster image is densely
+// packed from (0,0), and a sub-image of a larger one is not.
+func adoptedGrey(img image.Image, w, h int) *sampled {
+	g, ok := img.(*image.Gray)
+	if !ok {
+		return nil
+	}
+	b := g.Bounds()
+	if b.Min != (image.Point{}) || g.Stride != w || b.Dx() != w || b.Dy() != h {
+		return nil
+	}
+	if len(g.Pix) < w*h {
+		return nil
+	}
+	return &sampled{w: w, h: h, pix: g.Pix[:w*h], pal: greyPalette()}
+}
+
+// greyPalette is the 256 greys, built once.
+var greyPalette = sync.OnceValue(func() []color.RGBA {
+	pal := make([]color.RGBA, 256)
+	for i := range pal {
+		pal[i] = color.RGBA{R: uint8(i), G: uint8(i), B: uint8(i), A: 255}
+	}
+	return pal
+})
 
 // adopted takes an *image.RGBA's own bytes instead of converting them, and
 // reports nil when that would not be the same picture.
