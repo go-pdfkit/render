@@ -5,7 +5,9 @@
 
 package render
 
-// tripleCache remembers what a colour space made of a three-byte sample triple.
+// tripleCache remembers what a colour conversion made of a sample tuple, keyed on
+// the tuple's bytes packed into a uint32: three of them for an RGB triple, four for
+// a CMYK quad.
 //
 // A one-component picture gets a 256-entry memo, which is every answer there is.
 // Three components have 16.7 million possible triples, which is not a memo -- but a
@@ -55,17 +57,21 @@ type tripleCache struct {
 func (t *tripleCache) nextImage() {
 	t.gen++
 	// A generation that wrapped into the field below it would let an ancient slot
-	// answer. Starting over is the only safe answer, and at one generation per
-	// image it takes 16 million images on one page to get here.
+	// answer, so the table is CLEARED and counting starts again. Cleared rather
+	// than dropped: cerfa_12626.pdf carries 4 606 images on one page, which wraps
+	// an eight-bit generation eighteen times, and dropping the table would make
+	// that eighteen allocations of four megabytes where a clear is a memset.
 	if t.gen > maxGen {
 		t.gen = 1
-		t.slot = nil
+		clear(t.slot)
 	}
 }
 
 // cacheSlots is how many entries the cache holds. 2^19 is four times the 131 072
 // distinct colours a 300 dpi A4 scan of text carries and two and a half times the
-// 208 801 of the heaviest page measured, which keeps the probe count near one.
+// 208 801 of the heaviest page measured, which keeps the probe count near one. A
+// DVLA form's CMYK scan has 48 370 of 8.7 million pixels, 0.56%, so it sits well
+// inside the same table.
 const cacheSlots = 1 << 19
 
 // maxProbes bounds the walk. A cache is allowed to miss: the answer is recomputed,
@@ -73,22 +79,39 @@ const cacheSlots = 1 << 19
 // scan of half a megabyte.
 const maxProbes = 4
 
-// genShift is where the generation begins: 24 bits of key, then 24 of answer.
-const genShift = 48
-
-// maxGen is the largest generation the remaining bits hold.
-const maxGen = (1 << (64 - genShift)) - 1
+// A slot is 33 bits of key, then 24 of answer, then 7 of generation.
+//
+// THIRTY-THREE, because the key carries WHICH KIND of tuple it is. A CMYK quad
+// fills 32 bits, and a quad whose cyan is zero packs into exactly the bits an RGB
+// triple uses: quadKey(0, A, B, C) and tripleKey(A, B, C) are the same number. One
+// table serves both, so a page carrying a CMYK picture and a calibrated RGB one
+// could read one's answers for the other -- rendering, in the wrong colours, only
+// where the keys happen to meet.
+//
+// The generation would separate them, since each picture takes a new one. That is
+// discipline: it holds only as long as every path remembers to ask for a generation,
+// and a path that forgets produces a defect no test here could be made to show. A
+// bit in the key makes the collision IMPOSSIBLE instead, and leaves the generation
+// doing only what it was built for -- two pictures of the SAME kind whose answers
+// differ because their colour space or /Decode array differs.
+const (
+	keyBits  = 33
+	keyMask  = 1<<keyBits - 1
+	genShift = keyBits + 24
+	maxGen   = 1<<(64-genShift) - 1
+	// kindQuad marks a CMYK key. A triple leaves it clear.
+	kindQuad = 1 << 32
+)
 
 // lookup returns the cached answer for one triple, and the slot to write it into
 // when there is none. A slot of -1 means there was no room within maxProbes.
-func (t *tripleCache) lookup(r, g, b uint8) (cr, cg, cb uint8, found bool, at int) {
+func (t *tripleCache) lookup(key uint64) (cr, cg, cb uint8, found bool, at int) {
 	if t.gen == 0 {
 		t.gen = 1
 	}
 	if t.slot == nil {
 		t.slot = make([]uint64, cacheSlots)
 	}
-	key := tripleKey(r, g, b)
 	h := slotFor(key)
 	free := -1
 	for p := 0; p < maxProbes; p++ {
@@ -103,8 +126,8 @@ func (t *tripleCache) lookup(r, g, b uint8) (cr, cg, cb uint8, found bool, at in
 			}
 			break
 		}
-		if s&0xffffff == key {
-			v := s >> 24
+		if s&keyMask == key {
+			v := s >> keyBits
 			return uint8(v >> 16), uint8(v >> 8), uint8(v), true, i
 		}
 	}
@@ -113,18 +136,24 @@ func (t *tripleCache) lookup(r, g, b uint8) (cr, cg, cb uint8, found bool, at in
 
 // store writes one answer into the slot lookup named. A negative slot is a cache
 // that had no room, and dropping the answer is the whole cost of that.
-func (t *tripleCache) store(at int, r, g, b, cr, cg, cb uint8) {
+func (t *tripleCache) store(at int, key uint64, cr, cg, cb uint8) {
 	if at < 0 {
 		return
 	}
-	key := tripleKey(r, g, b)
 	val := uint64(cr)<<16 | uint64(cg)<<8 | uint64(cb)
-	t.slot[at] = t.gen<<genShift | val<<24 | key
+	t.slot[at] = t.gen<<genShift | val<<keyBits | key
 }
 
-// tripleKey packs one sample triple into the 24 bits the cache stores.
+// tripleKey packs one RGB sample triple into a key, with the kind bit clear.
 func tripleKey(r, g, b uint8) uint64 {
 	return uint64(r)<<16 | uint64(g)<<8 | uint64(b)
+}
+
+// quadKey packs one CMYK sample quad into a key, with the kind bit set. Four bytes
+// fill 32 bits, and the kind bit above them is what keeps quadKey(0, A, B, C) from
+// being the same number as tripleKey(A, B, C).
+func quadKey(c, m, y, k uint8) uint64 {
+	return kindQuad | uint64(c)<<24 | uint64(m)<<16 | uint64(y)<<8 | uint64(k)
 }
 
 // slotFor is where a key's probe run starts.

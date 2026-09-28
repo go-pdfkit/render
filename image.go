@@ -557,7 +557,7 @@ func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources
 		// already settled above: uninvertAdobeCMYK has read the /Decode array
 		// and turned the ink over or left it, and reading it a second time
 		// would undo that.
-		return cmykPicture(cm, w, h)
+		return r.cmykPicture(cm, w, h)
 	}
 	sp := r.colourSpace(dict.Get("ColorSpace"), resources, 0)
 	if passesSamplesThrough(sp) {
@@ -622,14 +622,15 @@ func (r *renderer) jpegThroughSpace(dict reader.Dict, img image.Image, resources
 			for x := 0; x < w; x++ {
 				i := (y*w + x) * 4
 				sr, sg, sb := src.Pix[i], src.Pix[i+1], src.Pix[i+2]
-				cr, cg, cb, ok, at := cache.lookup(sr, sg, sb)
+				key := tripleKey(sr, sg, sb)
+				cr, cg, cb, ok, at := cache.lookup(key)
 				if !ok {
 					comps[0] = decode(0, uint32(sr), 8)
 					comps[1] = decode(1, uint32(sg), 8)
 					comps[2] = decode(2, uint32(sb), 8)
 					col := sp.convert(comps)
 					cr, cg, cb = col.R, col.G, col.B
-					cache.store(at, sr, sg, sb, cr, cg, cb)
+					cache.store(at, key, cr, cg, cb)
 				}
 				out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = cr, cg, cb, 255
 			}
@@ -697,7 +698,7 @@ func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
 	// that one went through raster.FromImage and answered differently from
 	// every other CMYK picture in the package.
 	if cm, ok := img.(*image.CMYK); ok {
-		return cmykPicture(cm, w, h)
+		return r.cmykPicture(cm, w, h)
 	}
 	if s := adopted(img, w, h); s != nil {
 		return s
@@ -960,19 +961,45 @@ func intOr(o reader.Object, def int64) int64 {
 
 // cmykPicture converts a four-component picture the way every other CMYK in
 // this package is converted, which is through the printing primaries.
-func cmykPicture(cm *image.CMYK, w, h int) *sampled {
+func (r *renderer) cmykPicture(cm *image.CMYK, w, h int) *sampled {
 	out := &sampled{w: w, h: h, pix: make([]uint8, w*h*4)}
 	b := cm.Bounds()
 	v := make([]float64, 4)
+	// Cached on the sample quad, for the reason the three-component path is: a
+	// picture is not 2^32 colours. A DVLA form's 2480 by 3508 CMYK scan carries
+	// 8 699 840 pixels and 48 370 distinct quads -- 0.56% -- and the conversion
+	// was 59% of the page, one CMYKToSRGBWebCoated per pixel.
+	//
+	// NO nextImage HERE, unlike the three-component path, and the difference is
+	// the point. That path asks the document's COLOUR SPACE and its /Decode array,
+	// so two pictures on one page can disagree about the same triple and each needs
+	// its own generation. This conversion asks neither: cmykToRGBA is a function of
+	// the four samples alone, and a /Decode array has already been applied to them
+	// by the time they arrive. Two CMYK pictures cannot disagree, and a generation
+	// here would be a call no test could tell from its absence.
+	//
+	// What keeps this picture's answers away from a three-component one's is the
+	// KIND BIT in the key, not a generation -- see tripleCache. Make this
+	// conversion depend on anything from the document and a generation is needed
+	// again.
+	cache := &r.triples
 	for y := 0; y < h; y++ {
 		row := cm.Pix[cm.PixOffset(b.Min.X, b.Min.Y+y):]
 		for x := 0; x < w; x++ {
-			for c := 0; c < 4; c++ {
-				v[c] = float64(row[x*4+c]) / 255
+			c0, c1, c2, c3 := row[x*4], row[x*4+1], row[x*4+2], row[x*4+3]
+			key := quadKey(c0, c1, c2, c3)
+			cr, cg, cb, ok, at := cache.lookup(key)
+			if !ok {
+				v[0] = float64(c0) / 255
+				v[1] = float64(c1) / 255
+				v[2] = float64(c2) / 255
+				v[3] = float64(c3) / 255
+				col := cmykToRGBA(v)
+				cr, cg, cb = col.R, col.G, col.B
+				cache.store(at, key, cr, cg, cb)
 			}
-			col := cmykToRGBA(v)
 			i := (y*w + x) * 4
-			out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = col.R, col.G, col.B, 255
+			out.pix[i], out.pix[i+1], out.pix[i+2], out.pix[i+3] = cr, cg, cb, 255
 		}
 	}
 	return out

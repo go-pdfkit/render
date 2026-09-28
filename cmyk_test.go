@@ -2,10 +2,12 @@ package render
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"testing"
+	"time"
 
 	"github.com/go-pdfkit/reader"
 )
@@ -195,4 +197,203 @@ func TestACMYKJPEGIsConvertedLikeEveryOtherCMYK(t *testing.T) {
 		"BitsPerComponent": reader.Integer(8), "ColorSpace": reader.Name("DeviceCMYK"),
 	}, []byte{255, 255, 0, 0}, "")
 	wantColour(t, draw(t, d2, Options{}), 10, 10, color.RGBA{46, 49, 146, 255}, 3)
+}
+
+// asCMYKImage puts a four-component image of the caller's making behind the JPEG
+// decoder. Go's encoder writes three components whatever it is given, so a
+// four-component picture cannot be built by encoding one.
+func asCMYKImage(t *testing.T, side int, fill func(x, y int) color.CMYK) func() {
+	t.Helper()
+	was := jpegDecode
+	jpegDecode = func([]byte) (image.Image, error) {
+		src := image.NewCMYK(image.Rect(0, 0, side, side))
+		for y := 0; y < side; y++ {
+			for x := 0; x < side; x++ {
+				c := fill(x, y)
+				i := src.PixOffset(x, y)
+				src.Pix[i], src.Pix[i+1] = c.C, c.M
+				src.Pix[i+2], src.Pix[i+3] = c.Y, c.K
+			}
+		}
+		return src, nil
+	}
+	return func() { jpegDecode = was }
+}
+
+// bigCMYKPage draws one side-by-side CMYK JPEG over a page of that size.
+func bigCMYKPage(t *testing.T, side int) *reader.Document {
+	t.Helper()
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	img := w.Add(&reader.Stream{Dict: reader.Dict{
+		"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+		"Width": reader.Integer(side), "Height": reader.Integer(side),
+		"ColorSpace": reader.Name("DeviceCMYK"), "BitsPerComponent": reader.Integer(8),
+		"Filter": reader.Name("DCTDecode")}, Raw: []byte{0xFF, 0xD8}})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox":  nums(0, 0, float64(side), float64(side)),
+		"Resources": reader.Dict{"XObject": reader.Dict{"I": img}},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: []byte(fmt.Sprintf("q %d 0 0 %d 0 0 cm /I Do Q", side, side))})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// TestACMYKPictureIsConvertedOncePerDistinctQuad.
+//
+// CMYKToSRGBWebCoated was called once per PIXEL. On a DVLA form -- a 2480 by 3508
+// CMYK scan, 8 699 840 pixels -- that was 59% of the page, and the picture carries
+// 48 370 distinct quads: 0.56%. Cached, the page went from 893 ms to 210 ms.
+//
+// The bound is a ratio against a witness the cache cannot help: the SAME picture
+// with every pixel a different quad. Both convert the same number of pixels; only
+// one of them can answer from the table. A duration would pin this machine and a
+// call count would need a hook inside a third-party colour package.
+func TestACMYKPictureIsConvertedOncePerDistinctQuad(t *testing.T) {
+	const side = 360 // 129 600 pixels
+	best := func(fill func(x, y int) color.CMYK) time.Duration {
+		defer asCMYKImage(t, side, fill)()
+		d := bigCMYKPage(t, side)
+		draw(t, d, Options{}) // warm
+		out := time.Duration(1 << 62)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			draw(t, d, Options{})
+			if took := time.Since(start); took < out {
+				out = took
+			}
+		}
+		return out
+	}
+	// Few quads, which is what a scanned form is.
+	subject := best(func(x, y int) color.CMYK {
+		v := uint8((x/40 + y/40) % 4 * 60)
+		return color.CMYK{C: v, M: v, Y: v, K: v}
+	})
+	// Every pixel its own quad, which the cache can do nothing with.
+	witness := best(func(x, y int) color.CMYK {
+		n := y*side + x
+		return color.CMYK{C: uint8(n), M: uint8(n >> 8), Y: uint8(n >> 16), K: uint8(n * 7)}
+	})
+	if subject > witness/2 {
+		t.Errorf("a four-quad picture took %v against an all-distinct one's %v (%.2f); "+
+			"the conversion is being asked per pixel rather than per distinct quad",
+			subject, witness, float64(subject)/float64(witness))
+	}
+}
+
+// TestACMYKPictureAndAnRGBOneOnThePageDoNotShareAnswers.
+//
+// One table serves both, and their keys share a space: the quad (0, A, B, C) packs
+// into exactly the bits the triple (A, B, C) uses. Without a generation between the
+// pictures the second reads the first's answers -- and it renders, in the wrong
+// colours, only where the keys happen to meet, which is the kind of wrong that no
+// smoke test and no crash reports.
+//
+// BOTH ORDERS, because each picture starts its own generation and a test of one
+// order only exercises the other picture's call. With CMYK first, the RGB path's
+// nextImage protects it; removing the CMYK path's own call changes nothing and the
+// mutation survives. It is RGB FIRST that the CMYK picture's own call defends.
+//
+// The decoder seam hands back the pictures in turn, because Go's encoder cannot
+// write a four-component JPEG.
+func TestACMYKPictureAndAnRGBOneOnThePageDoNotShareAnswers(t *testing.T) {
+	for _, cmykFirst := range []bool{true, false} {
+		t.Run(map[bool]string{true: "CMYK first", false: "RGB first"}[cmykFirst], func(t *testing.T) {
+			twoPicturesShareNoAnswers(t, cmykFirst)
+		})
+	}
+}
+
+func twoPicturesShareNoAnswers(t *testing.T, cmykFirst bool) {
+	t.Helper()
+	const a, b, c = 0x30, 0x60, 0x90
+	was := jpegDecode
+	t.Cleanup(func() { jpegDecode = was })
+	cmyk := func() (image.Image, error) {
+		// Cyan zero, so this quad's key is exactly the RGB triple's.
+		src := image.NewCMYK(image.Rect(0, 0, 4, 4))
+		for i := 0; i+3 < len(src.Pix); i += 4 {
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = 0, a, b, c
+		}
+		return src, nil
+	}
+	rgb := func() (image.Image, error) {
+		src := image.NewRGBA(image.Rect(0, 0, 4, 4))
+		for i := 0; i+3 < len(src.Pix); i += 4 {
+			src.Pix[i], src.Pix[i+1], src.Pix[i+2], src.Pix[i+3] = a, b, c, 255
+		}
+		return src, nil
+	}
+	calls := 0
+	jpegDecode = func([]byte) (image.Image, error) {
+		calls++
+		if (calls == 1) == cmykFirst {
+			return cmyk()
+		}
+		return rgb()
+	}
+
+	w := reader.NewWriter("1.7")
+	pagesRef := w.Reserve()
+	mk := func(space reader.Object) reader.Object {
+		return w.Add(&reader.Stream{Dict: reader.Dict{
+			"Type": reader.Name("XObject"), "Subtype": reader.Name("Image"),
+			"Width": reader.Integer(4), "Height": reader.Integer(4),
+			"ColorSpace": space, "BitsPerComponent": reader.Integer(8),
+			"Filter": reader.Name("DCTDecode")}, Raw: []byte{0xFF, 0xD8}})
+	}
+	cmykRef := mk(reader.Name("DeviceCMYK"))
+	rgbRef := mk(reader.Array{reader.Name("CalRGB"), reader.Dict{
+		"WhitePoint": nums(0.9505, 1, 1.089), "Gamma": nums(2.2, 2.2, 2.2)}})
+	pageRef := w.Add(reader.Dict{"Type": reader.Name("Page"), "Parent": pagesRef,
+		"MediaBox":  nums(0, 0, 8, 4),
+		"Resources": reader.Dict{"XObject": reader.Dict{"C": cmykRef, "R": rgbRef}},
+		"Contents": w.Add(&reader.Stream{Dict: reader.Dict{},
+			Raw: []byte(map[bool]string{
+				true:  "q 4 0 0 4 0 0 cm /C Do Q q 4 0 0 4 4 0 cm /R Do Q",
+				false: "q 4 0 0 4 0 0 cm /R Do Q q 4 0 0 4 4 0 cm /C Do Q",
+			}[cmykFirst])})})
+	w.Put(pagesRef, reader.Dict{"Type": reader.Name("Pages"),
+		"Kids": reader.Array{pageRef}, "Count": reader.Integer(1)})
+	out, err := w.Finish(reader.Dict{"Root": w.Add(reader.Dict{
+		"Type": reader.Name("Catalog"), "Pages": pagesRef})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := reader.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := draw(t, d, Options{})
+
+	// What each picture gives with nothing before it in the table.
+	jpegDecode = func([]byte) (image.Image, error) { return rgb() }
+	rgbAlone := draw(t, jpegPage(t, []byte{0xFF, 0xD8}, reader.Dict{
+		"ColorSpace": reader.Array{reader.Name("CalRGB"), reader.Dict{
+			"WhitePoint": nums(0.9505, 1, 1.089), "Gamma": nums(2.2, 2.2, 2.2)}}}), Options{})
+	jpegDecode = func([]byte) (image.Image, error) { return cmyk() }
+	cmykAlone := draw(t, jpegPage(t, []byte{0xFF, 0xD8}, nil), Options{})
+
+	// Whichever went second is the one that could have read the other's answers.
+	secondX := 5
+	want, which := rgbAlone.At(1, 1), "RGB"
+	other := "CMYK"
+	if !cmykFirst {
+		want, which, other = cmykAlone.At(1, 1), "CMYK", "RGB"
+	}
+	if p := got.At(secondX, 1); p.R != want.R || p.G != want.G || p.B != want.B {
+		t.Errorf("the %s picture drew %d,%d,%d after a %s one and %d,%d,%d alone; "+
+			"it read the %s answer", which, p.R, p.G, p.B, other, want.R, want.G, want.B, other)
+	}
 }
