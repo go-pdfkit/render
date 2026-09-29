@@ -27,7 +27,7 @@ func TestAJPXPictureOfInkReachesColourThroughThePrintingPrimaries(t *testing.T) 
 	}
 	defer func() { jpxDecode = was }()
 	wasSize := jpxSize
-	jpxSize = func([]byte) (int, int) { return 4, 4 }
+	jpxSize = func([]byte) (int, int, bool) { return 4, 4, false }
 	defer func() { jpxSize = wasSize }()
 
 	d := jpxPage(t, jpxImage(t, 4, 4), 4, 4)
@@ -65,7 +65,7 @@ func TestAJPXPictureOfColourIsStillDrawnAsColour(t *testing.T) {
 	}
 	defer func() { jpxDecode = was }()
 	wasSize := jpxSize
-	jpxSize = func([]byte) (int, int) { return 4, 4 }
+	jpxSize = func([]byte) (int, int, bool) { return 4, 4, false }
 	defer func() { jpxSize = wasSize }()
 
 	d := jpxPage(t, jpxImage(t, 4, 4), 4, 4)
@@ -106,7 +106,7 @@ func TestAnOpaqueJPXPictureIsTakenNotConverted(t *testing.T) {
 	}
 
 	wasSize := jpxSize
-	jpxSize = func([]byte) (int, int) { return 4, 4 }
+	jpxSize = func([]byte) (int, int, bool) { return 4, 4, false }
 	defer func() { jpxSize = wasSize }()
 	was := jpxDecode
 	defer func() { jpxDecode = was }()
@@ -140,7 +140,7 @@ func TestAnOpaqueJPXPictureIsTakenNotConverted(t *testing.T) {
 // is broken.
 func TestAJPXPictureThatCannotBeTakenIsConverted(t *testing.T) {
 	wasSize := jpxSize
-	jpxSize = func([]byte) (int, int) { return 4, 4 }
+	jpxSize = func([]byte) (int, int, bool) { return 4, 4, false }
 	defer func() { jpxSize = wasSize }()
 	was := jpxDecode
 	defer func() { jpxDecode = was }()
