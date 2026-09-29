@@ -355,6 +355,7 @@ func TestWhatACodecSaysItHoldsIsPaidForToo(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		cw, ch         int
+		cost           int
 		charged        int
 		budget         int
 		bounded        bool
@@ -382,10 +383,34 @@ func TestWhatACodecSaysItHoldsIsPaidForToo(t *testing.T) {
 		{name: "and is refused when it cannot",
 			cw: 10, ch: 10, charged: 60, budget: 39, bounded: true, want: false, wantLeft: 39,
 			wantRefusal: true, wantRefusalHas: "39"},
+
+		// What the cost changes and what it does not. These say nothing about
+		// the per-page budget and so are asked UNBOUNDED, where a page spends
+		// nothing and only the ceiling on a single picture applies -- which is
+		// also the path [Page] takes, and the one that decided whether these
+		// corpus pages drew at all.
+		//
+		// The pixel counts are the corpus's own: 9 449 by 13 701 is
+		// bulletinno38tasm.pdf, one component, which drew NOTHING until a
+		// decode was charged by its shape.
+		{name: "a one-component picture past the OLD pixel bound is admitted",
+			cw: 9449, ch: 13701, cost: decodeCostGrey, bounded: false, want: true},
+		{name: "the same picture at the colour cost, which is what it used to pay",
+			cw: 9449, ch: 13701, cost: decodeCostOther, bounded: false, want: false},
+		{name: "a colour picture at the old bound is still admitted, so nothing lost it",
+			cw: 8192, ch: 8192, cost: decodeCostOther, bounded: false, want: true},
+		{name: "a colour picture one pixel past the old bound is still refused",
+			cw: 8192, ch: 8193, cost: decodeCostOther, bounded: false, want: false},
+		{name: "even one component has an end: past maxDecodeBytes it is refused",
+			cw: 20000, ch: 20000, cost: decodeCostGrey, bounded: false, want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			cost := tc.cost
+			if cost == 0 {
+				cost = decodeCostOther
+			}
 			r := &renderer{budget: tc.budget, bounded: tc.bounded}
-			if got := r.affordDecoded(tc.cw, tc.ch, tc.charged); got != tc.want {
+			if got := r.affordDecoded(tc.cw, tc.ch, tc.charged, cost); got != tc.want {
 				t.Errorf("a codestream of %d by %d with %d left: %v, want %v",
 					tc.cw, tc.ch, tc.budget, got, tc.want)
 			}
@@ -411,11 +436,11 @@ func TestACodestreamThatSaysNothingIsLeftToItsDecoder(t *testing.T) {
 	if w, h := jpegSize([]byte("not a JPEG")); w != 0 || h != 0 {
 		t.Errorf("a JPEG header read out of nothing as %dx%d", w, h)
 	}
-	if w, h := jpxSize([]byte("not a codestream")); w != 0 || h != 0 {
+	if w, h, _ := jpxSize([]byte("not a codestream")); w != 0 || h != 0 {
 		t.Errorf("a JPEG 2000 header read out of nothing as %dx%d", w, h)
 	}
 	// And a real one is read.
-	if w, h := jpxSize(jpxImage(t, 6, 4)); w != 6 || h != 4 {
+	if w, h, _ := jpxSize(jpxImage(t, 6, 4)); w != 6 || h != 4 {
 		t.Errorf("a real codestream of 6x4 read as %dx%d", w, h)
 	}
 }
@@ -425,7 +450,7 @@ func TestAJPXCodestreamIsMeasuredBeforeItIsDecoded(t *testing.T) {
 	// header claiming more than may be held can be put behind it without
 	// having to encode four gigabytes of picture to say so.
 	wasSize := jpxSize
-	jpxSize = func([]byte) (int, int) { return 100000, 100000 }
+	jpxSize = func([]byte) (int, int, bool) { return 100000, 100000, false }
 	defer func() { jpxSize = wasSize }()
 	reached := false
 	wasDecode := jpxDecode

@@ -143,10 +143,47 @@ func unitSquareBounds(m geometry.Matrix, w, h int) image.Rectangle {
 // speed table read them as wins.
 const maxImageBytes = 256 << 20
 
-// maxImagePixels is the same bound for the paths whose cost is four bytes a
-// pixel and is known to be: a JPEG or JPEG 2000 codestream, which decodes to
-// colour whatever it holds.
+// maxImagePixels is the pixel count a codec was allowed whatever it held.
+//
+// It is kept because it is the bound this package used everywhere before a
+// decode was charged by its shape, and maxDecodeBytes is derived from it so
+// that nothing that used to be admitted stopped being.
 const maxImagePixels = maxImageBytes / 4
+
+// maxDecodeBytes is what a CODEC may spend on one picture, as against
+// maxImageBytes which is what the picture it produces may cost to hold.
+//
+// The two are not the same number and were conflated. A decoder holds its
+// coefficients, its component planes and its output at once: measured on whole
+// pages of the corpus, a JPEG 2000 decode costs 6.8 to 9.7 bytes a pixel for
+// one component and 20.2 to 21.1 for three -- never the four the old bound
+// assumed. Charging every shape the same was wrong in both directions, and
+// visibly so: `sim_unitarian-...-1825-06-25_4_25.pdf` needs 516 MB and was
+// REFUSED, while `cabepcc_000084.pdf` needs 667 MB and is drawn.
+//
+// It is 24 times the old pixel bound, which is exactly 1.5 GB, so that a codec
+// charged 24 bytes a pixel has the bound it had before to within one pixel.
+// Nothing that was admitted is refused; what changes is that a picture cheaper
+// than 24 bytes a pixel stops paying for the colour it does not have.
+const maxDecodeBytes = 24 * int64(maxImagePixels)
+
+// Bytes a pixel a decode of each shape costs, measured on whole-page renders of
+// the corpus at 72 dpi, minimum of three runs:
+//
+//	one component   6.8, 6.9, 7.7, 9.7   -> charged 10
+//	three           20.2, 21.1           -> charged 24, which is what a JPEG
+//	                                        and every other codestream is
+//	                                        charged, so their bound does not
+//	                                        move at all.
+//
+// A FOUR-component JPEG 2000 is charged as three. Nothing in the measured
+// corpus is that shape -- 65 034 streams of one component and 54 130 of three,
+// none of any other -- so the figure is not measured, and it is the one place
+// this bound is a guess rather than a reading.
+const (
+	decodeCostGrey  = 10
+	decodeCostOther = 24
+)
 
 // memoAndPack decides the two things samples() has to decide, and it is a
 // function of its own because conflating them was a defect.
@@ -498,7 +535,9 @@ func sampleAt(data []byte, rowStart, bitOffset, bpc int) uint32 {
 // decodeJPEG reads the one compressed image format a PDF may carry whole.
 func (r *renderer) decodeJPEG(dict reader.Dict, data []byte, w, h int, resources reader.Dict) *sampled {
 	cw, ch := jpegSize(data)
-	if !r.affordDecoded(cw, ch, w*h) {
+	// A JPEG decodes to colour whatever it holds, and 24 against maxDecodeBytes
+	// is the bound it had when that bound was written in pixels.
+	if !r.affordDecoded(cw, ch, w*h, decodeCostOther) {
 		return nil
 	}
 	img, err := jpegDecode(data)
@@ -681,8 +720,12 @@ func passesSamplesThrough(sp *space) bool {
 // taught: a picture that arrives as ink must reach colour through the printing
 // primaries, not through raster.FromImage's (1-c)(1-k).
 func (r *renderer) decodeJPX(data []byte, w, h int) *sampled {
-	cw, ch := jpxSize(data)
-	if !r.affordDecoded(cw, ch, w*h) {
+	cw, ch, grey := jpxSize(data)
+	cost := decodeCostOther
+	if grey {
+		cost = decodeCostGrey
+	}
+	if !r.affordDecoded(cw, ch, w*h, cost) {
 		return nil
 	}
 	img, err := jpxDecode(data)
@@ -793,7 +836,7 @@ func adopted(img image.Image, w, h int) *sampled {
 // than the dictionary pays the difference. [Page] keeps no picture and is not
 // bounded that way, so its renderer spends nothing and only the ceiling on a
 // single picture applies to it.
-func (r *renderer) affordDecoded(cw, ch, charged int) bool {
+func (r *renderer) affordDecoded(cw, ch, charged, bytesPerPixel int) bool {
 	if cw <= 0 || ch <= 0 {
 		// Nothing could be read from the header, so nothing will be made from
 		// the body either: the decoder gives up before it allocates.
@@ -805,7 +848,8 @@ func (r *renderer) affordDecoded(cw, ch, charged int) bool {
 	// straight through a ceiling written as `>`. Its sibling afford already
 	// said why, one file over. Either side alone is still refused first, so a
 	// width past the ceiling never reaches the multiplication at all.
-	if cw > maxImagePixels || ch > maxImagePixels || int64(cw)*int64(ch) > maxImagePixels {
+	if cw > maxImagePixels || ch > maxImagePixels ||
+		int64(cw)*int64(ch)*int64(bytesPerPixel) > maxDecodeBytes {
 		return false
 	}
 	if !r.bounded {
@@ -837,13 +881,16 @@ var jpegSize = func(data []byte) (int, int) {
 	return cfg.Width, cfg.Height
 }
 
-// jpxSize is the same question asked of a JPEG 2000 codestream.
-var jpxSize = func(data []byte) (int, int) {
+// jpxSize is the same question asked of a JPEG 2000 codestream, and it also
+// says whether the picture has ONE component -- which decides what the decode
+// is charged, and is on the header rather than in the body, so asking costs
+// nothing and allocates nothing.
+var jpxSize = func(data []byte) (w, h int, grey bool) {
 	cfg, err := jpeg2000.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
-	return cfg.Width, cfg.Height
+	return cfg.Width, cfg.Height, cfg.ColorModel == color.GrayModel
 }
 
 // jpxDecode is a variable so a test can watch what happens when a decoder
