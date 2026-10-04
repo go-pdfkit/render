@@ -30,9 +30,20 @@ XObjects with their own matrix, bounding box and resources.
 Images too: XObjects and inline images, at every bit depth the format has,
 in every colour space, with a `/Decode` array, as one-bit stencils painted
 in the colour in force, and with either kind of transparency — a soft mask
-of levels or a stencil of what to leave out. A JPEG is decoded by the
-standard library; a format nothing here reads is left undrawn rather than
-drawn wrong.
+of levels or a stencil of what to leave out. A format nothing here reads is
+left undrawn rather than drawn wrong.
+
+Which decoder runs is part of what this draws, so it is named:
+
+| filter | decoder |
+|---|---|
+| `/DCTDecode` | [`go-images/jpeg`](https://github.com/go-images/jpeg) — Go's own `image/jpeg` with one change, a four-component picture's chroma upsampled the way libjpeg does rather than by repeating each sample. The standard library merges those four planes itself and hands back an `*image.CMYK`, so a caller cannot put it right afterwards: the planes are gone. Worth 36 levels to 2 on the cyan plate of one corpus picture. |
+| `/JPXDecode` | [`go-images/jpeg2000`](https://github.com/go-images/jpeg2000), a fork for the same kind of reason |
+| `/JBIG2Decode` | `go-gfx/gfx/codec`, where the fleet keeps its image decoders |
+| `/CCITTFaxDecode`, `/FlateDecode`, `/LZWDecode`, `/RunLengthDecode` | `go-pdfkit/reader`, which runs them to samples |
+
+This said *"a JPEG is decoded by the standard library"*, which stopped being
+true when the fork was taken.
 
 Text: the whole text state and every positioning and showing operator,
 with glyphs taken from an embedded TrueType or OpenType font, from a
