@@ -303,11 +303,10 @@ func (r *renderer) font(o reader.Object, resources reader.Dict) *pdfFont {
 	if !ok {
 		return nil
 	}
-	fonts, ok := r.doc.GetDict(resources, "Font")
-	if !ok {
+	entry := r.named(resources, "Font", name)
+	if entry == nil {
 		return nil
 	}
-	entry := fonts.Get(name)
 	if ref, ok := entry.(reader.Ref); ok {
 		if f, ok := r.fonts[ref.Num]; ok {
 			return f

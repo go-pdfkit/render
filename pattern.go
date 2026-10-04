@@ -32,11 +32,11 @@ type pattern struct {
 
 // readPattern reads a pattern out of the page's resources.
 func (r *renderer) readPattern(name reader.Name, resources reader.Dict) *pattern {
-	pats, ok := r.doc.GetDict(resources, "Pattern")
-	if !ok {
+	e := r.named(resources, "Pattern", name)
+	if e == nil {
 		return nil
 	}
-	entry := resolve(r.doc, pats.Get(name))
+	entry := resolve(r.doc, e)
 	dict, ok := reader.ToDict(entry)
 	stream, isStream := reader.ToStream(entry)
 	if isStream {
@@ -153,11 +153,11 @@ func (r *renderer) drawShading(g *gstate, operands []reader.Object, resources re
 	if !ok {
 		return
 	}
-	shadings, ok := r.doc.GetDict(resources, "Shading")
-	if !ok {
+	e := r.named(resources, "Shading", name)
+	if e == nil {
 		return
 	}
-	sh := r.readShading(shadings.Get(name), resources)
+	sh := r.readShading(e, resources)
 	if sh == nil {
 		return
 	}

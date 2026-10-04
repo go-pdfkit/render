@@ -170,11 +170,11 @@ func (r *renderer) hiddenProperty(operands []reader.Object, resources reader.Dic
 		return false
 	}
 	if name, ok := reader.ToName(operands[1]); ok {
-		props, ok := r.doc.GetDict(resources, "Properties")
-		if !ok {
+		entry := r.named(resources, "Properties", name)
+		if entry == nil {
 			return false
 		}
-		return r.oc.hidden(r.doc, props.Get(name))
+		return r.oc.hidden(r.doc, entry)
 	}
 	return r.oc.hidden(r.doc, operands[1])
 }
