@@ -120,6 +120,21 @@ CI gates on **exact 100% statement coverage**, `go vet`, and a cross-compile
 across `linux/{amd64,arm64,riscv64,loong64,ppc64le,s390x}`, `js/wasm`,
 `darwin/arm64` and `windows/amd64`.
 
+~~and a cross-compile~~ — **it also RUNS the suite** where it used only to
+build it. Eight lanes beyond `linux/amd64`:
+
+| lane | how |
+|---|---|
+| `riscv64`, `loong64`, `ppc64le`, `s390x`, `arm` | `go test ./...` under `qemu-*-static` |
+| `386` | **natively** — `qemu-i386` loses the guest's floating-point state across preemption, which failed five of eight runs and passed eight of eight with `asyncpreemptoff=1`; the workflow carries that measurement beside the lane |
+| `macos-latest`, `windows-latest` | `go test ./...` on the runner |
+
+`s390x` is big-endian. Cross-compiling for darwin and windows is not running
+there, and poppler and pdfium are tested on both — so those two are not new
+ground, they are ground the references hold and this repository did not: path
+handling, line endings and file semantics are where a Linux-only suite is
+quietly incomplete.
+
 ## The rest of the family
 
 [**reader**](https://github.com/go-pdfkit/reader) reads and writes the format ·
