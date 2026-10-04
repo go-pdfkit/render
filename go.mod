@@ -1,6 +1,6 @@
 module github.com/go-pdfkit/render
 
-go 1.26.4
+go 1.27.1
 
 require (
 	github.com/go-gfx/gfx v0.34.0
