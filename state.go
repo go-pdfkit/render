@@ -75,6 +75,26 @@ type renderer struct {
 	// depth bounds how far one form may draw another.
 	depth int
 
+	// resChain is the resource dictionaries in force, outermost first.
+	//
+	// A form XObject's /Resources is not required to be COMPLETE, and a name
+	// it does not provide is resolved in the resources that were in force
+	// where the form was painted. This renderer had half of that rule: an
+	// ABSENT /Resources fell back to the parent, a present one replaced it
+	// wholesale, so a name the form did not list resolved to nothing and was
+	// silently not drawn.
+	//
+	// qpdf ships a fixture for exactly this, and it is in the conformance
+	// corpus: form-xobjects-some-resources2.pdf draws six 15x15 images and we
+	// drew TWO, 8.54% of the page's pixels away from poppler at a worst
+	// square mean of 130 levels. See go-pdfkit/render#102.
+	//
+	// Each stream that brings its own resources pushes them -- a form, a Type
+	// 3 glyph procedure, a pattern cell, an annotation's appearance, a soft
+	// mask -- and named() walks this innermost-first. maxFormDepth bounds how
+	// deep it goes.
+	resChain []reader.Dict
+
 	// drawingProcs holds the object numbers of the Type 3 glyph procedures
 	// currently being drawn, so that one cannot draw itself.
 	//
@@ -489,4 +509,44 @@ func (r *renderer) salvaged(stream *reader.Stream) ([]byte, reader.Name, error) 
 		return nil, "", dec.Cause
 	}
 	return dec.Data, dec.Image, nil
+}
+
+// named resolves one name in one resource category, in the resources in force:
+// the innermost dictionary first, then outward.
+//
+// It replaces seven lookups that each read the category out of ONE dictionary.
+// Each of them is a place where a form with incomplete resources lost a name:
+// XObject, Font, ColorSpace, Pattern, Shading, ExtGState and Properties.
+//
+// A nil comes back for a name no dictionary in force provides, which is what
+// the callers already handled: the entry does not resolve and nothing is drawn.
+// The dictionary the caller holds is tried FIRST and the chain behind it. It
+// is passed rather than read off the chain so that the parameter every one of
+// these functions already takes keeps meaning what it says -- a lookup whose
+// first dictionary is implicit is a lookup nobody can call directly, and the
+// tests do call them directly.
+func (r *renderer) named(resources reader.Dict, category, name reader.Name) reader.Object {
+	if v := in(r.doc, resources, category, name); v != nil {
+		return v
+	}
+	for i := len(r.resChain) - 1; i >= 0; i-- {
+		if v := in(r.doc, r.resChain[i], category, name); v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// in looks one name up in one dictionary's category, and answers nil for
+// "not there" -- which a present /Null is not.
+func in(doc *reader.Document, resources reader.Dict, category, name reader.Name) reader.Object {
+	d, ok := doc.GetDict(resources, category)
+	if !ok {
+		return nil
+	}
+	v, present := d[name]
+	if !present {
+		return nil
+	}
+	return v
 }

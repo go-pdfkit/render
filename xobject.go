@@ -21,11 +21,11 @@ func (r *renderer) drawXObject(g *gstate, operands []reader.Object, resources re
 	if !ok {
 		return
 	}
-	xobjects, ok := r.doc.GetDict(resources, "XObject")
-	if !ok {
+	entry := r.named(resources, "XObject", name)
+	if entry == nil {
 		return
 	}
-	stream, ok := reader.ToStream(resolve(r.doc, xobjects.Get(name)))
+	stream, ok := reader.ToStream(resolve(r.doc, entry))
 	if !ok {
 		return
 	}

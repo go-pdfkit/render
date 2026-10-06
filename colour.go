@@ -108,11 +108,11 @@ func (r *renderer) applyExtGState(g *gstate, operands []reader.Object, resources
 	if !ok {
 		return
 	}
-	states, ok := r.doc.GetDict(resources, "ExtGState")
-	if !ok {
+	entry := r.named(resources, "ExtGState", name)
+	if entry == nil {
 		return
 	}
-	params, ok := r.doc.GetDict(states, name)
+	params, ok := reader.ToDict(resolve(r.doc, entry))
 	if !ok {
 		return
 	}

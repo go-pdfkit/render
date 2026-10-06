@@ -20,6 +20,10 @@ const (
 
 // run executes a content stream against a graphics state.
 func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
+	// These are the innermost resources from here on, and a name they do not
+	// provide is resolved outward -- see renderer.resChain and named().
+	r.resChain = append(r.resChain, resources)
+	defer func() { r.resChain = r.resChain[:len(r.resChain)-1] }()
 	// Marked content does not reach across streams: a form's BDC has nothing
 	// to do with the page's, and a stream that opens one and never closes it
 	// must not leave the next stream hidden.

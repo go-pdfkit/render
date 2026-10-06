@@ -106,12 +106,8 @@ func (r *renderer) colourSpace(o reader.Object, resources reader.Dict, depth int
 			return s
 		}
 		// A name that is not a device space names one in the resources.
-		spaces, ok := r.doc.GetDict(resources, "ColorSpace")
-		if !ok {
-			return deviceGray
-		}
-		entry := spaces.Get(name)
-		if entry.Kind() == reader.KindNull {
+		entry := r.named(resources, "ColorSpace", name)
+		if entry == nil || entry.Kind() == reader.KindNull {
 			return deviceGray
 		}
 		return r.colourSpace(entry, resources, depth+1)

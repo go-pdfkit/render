@@ -292,7 +292,12 @@ func (r *renderer) imagesDrawn(content []byte, res reader.Dict, depth int) []Ima
 	if depth > maxImageDepth {
 		return nil
 	}
-	xo, _ := reader.ToDict(resolve(r.doc, res.Get("XObject")))
+	// The extraction path does not go through run(), so it pushes its own.
+	// Without this a form whose /Resources is present but INCOMPLETE loses
+	// every name it does not list: six images against two on qpdf's
+	// form-xobjects-some-resources2.pdf. See renderer.resChain.
+	r.resChain = append(r.resChain, res)
+	defer func() { r.resChain = r.resChain[:len(r.resChain)-1] }()
 	// A stream that stops decoding part way is walked as far as it got, which
 	// is what this package draws; the error says nothing the operators do not.
 	ops, _ := reader.Operations(content)
@@ -305,7 +310,10 @@ func (r *renderer) imagesDrawn(content []byte, res reader.Dict, depth int) []Ima
 		if !ok {
 			continue
 		}
-		entry := xo.Get(name)
+		entry := r.named(res, "XObject", name)
+		if entry == nil {
+			continue
+		}
 		st, ok := reader.ToStream(resolve(r.doc, entry))
 		if !ok {
 			continue
