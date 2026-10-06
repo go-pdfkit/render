@@ -95,6 +95,10 @@ type renderer struct {
 	// deep it goes.
 	resChain []reader.Dict
 
+	// inlines counts the inline images [Images] has returned, so that each
+	// gets a name of its own. There is no resource name to use.
+	inlines int
+
 	// drawingProcs holds the object numbers of the Type 3 glyph procedures
 	// currently being drawn, so that one cannot draw itself.
 	//

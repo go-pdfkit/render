@@ -258,6 +258,59 @@ func (r *renderer) decoded(name string, object int, st *reader.Stream, res reade
 	return out
 }
 
+// inlineImage reads one picture written into the content stream with BI.
+//
+// This used to return nothing, and said so: "they are named by no resource and
+// are objects of nothing, so there is nothing for a tool that extracts a
+// file's objects to hand back beside them." The first half is true and the
+// conclusion was not measured. pdfimages EXTRACTS inline images and lists them
+// with an object of 0, so there was something to hand back, and it was being
+// compared against nothing: over the 450 forms of the conformance corpus's
+// fr-cerfa, 4 147 pictures -- 2 614 of them stencils, 2 592 of them 16x16, one
+// document holding 2 592. A defect in inline-image decoding was invisible to
+// every figure in that baseline. See go-pdfkit/render#101.
+//
+// ONE ENTRY PER BI, which is the only unit that can be right here: an inline
+// image IS its draw, there is no object to collapse repeats onto, and
+// pdfimages lists one row per draw as well. A page of 2 592 of them returns
+// 2 592 entries, which the budget covers -- 2 592 pictures of 16x16 is 663 552
+// pixels against a quarter of a billion.
+//
+// Object 0, because that is what the file gives it and what pdfimages prints:
+// a harness pairing by object number then falls back to size, which is the
+// case that fallback was written for and had never once been reached.
+//
+// The NAME is an ordinal, "BI#1" upward across the whole call, because there
+// is no resource name to use and a reader of a difference needs to be able to
+// say which one. It counts across forms as well as streams, so two inline
+// images never share a name within one call to [Images].
+//
+// No mask is read beside it. An inline image's dictionary has no abbreviation
+// for /SMask and the long names are not permitted there, so there is nothing
+// to follow.
+func (r *renderer) inlineImage(im *reader.InlineImage, res reader.Dict) []Image {
+	dict := im.Expanded()
+	if !r.afford(dict) {
+		return nil
+	}
+	s := r.decodeBase(dict, im.Raw, res)
+	if s == nil {
+		return nil
+	}
+	r.inlines++
+	stencil, _ := reader.ToBool(resolve(r.doc, dict.Get("ImageMask")))
+	return []Image{{
+		Name:    fmt.Sprintf("BI#%d", r.inlines),
+		Object:  0,
+		Filter:  imageFilterOf(r.doc, &reader.Stream{Dict: dict, Raw: im.Raw}),
+		Decoded: r.hasDecodeArray(dict),
+		Stencil: bool(stencil),
+		// Expanded for the reason decoded() gives: raster.Image.Pix is four
+		// bytes a pixel and callers read it directly.
+		Pic: pic(s),
+	}}
+}
+
 // hasDecodeArray says whether a picture's samples were mapped through a
 // /Decode array on the way out.
 func (r *renderer) hasDecodeArray(dict reader.Dict) bool {
@@ -303,6 +356,13 @@ func (r *renderer) imagesDrawn(content []byte, res reader.Dict, depth int) []Ima
 	ops, _ := reader.Operations(content)
 	var out []Image
 	for _, op := range ops {
+		if op.Operator == "BI" && op.Image != nil {
+			out = append(out, r.inlineImage(op.Image, res)...)
+			if r.refused != nil {
+				return out
+			}
+			continue
+		}
 		if op.Operator != "Do" || len(op.Operands) == 0 {
 			continue
 		}
