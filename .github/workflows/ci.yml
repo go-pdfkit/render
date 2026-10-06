@@ -43,7 +43,7 @@ jobs:
           fi
           echo "all statements covered (100.0%)"
 
-      - name: Cross-compile (6 64-bit arches + wasm + darwin + windows)
+      - name: Cross-compile (6 64-bit arches + wasm, darwin, windows, the BSDs)
         run: |
           for arch in amd64 arm64 riscv64 loong64 ppc64le s390x; do
             echo "== linux/$arch =="
@@ -52,6 +52,16 @@ jobs:
           GOOS=js      GOARCH=wasm  go build ./...
           GOOS=darwin  GOARCH=arm64 go build ./...
           GOOS=windows GOARCH=amd64 go build ./...
+          # The BSDs and the Solaris family. CGO_ENABLED=0 throughout means
+          # the operating system reaches this code only through the standard
+          # library, so these are cheap -- and a build that is cheap and never
+          # run is still worth having, because it catches a build tag before
+          # somebody on that system does.
+          for t in freebsd/amd64 freebsd/arm64 openbsd/amd64 openbsd/arm64 \
+                   netbsd/amd64 dragonfly/amd64 illumos/amd64 solaris/amd64; do
+            echo "== $t =="
+            GOOS=${t%%/*} GOARCH=${t##*/} go build ./...
+          done
 
   # Cross-compiling proves the code COMPILES for an architecture. It does not
   # prove it works there, and this package is full of the shapes where that
@@ -110,13 +120,69 @@ jobs:
   # file semantics are where a Linux-only suite is quietly incomplete.
   #
   # The coverage gate stays on ubuntu; these two lanes only run the tests.
+  # ⛔ Building for an operating system is not running on it, and this is the
+  # same argument the arch lanes make. The difference here is smaller --
+  # CGO_ENABLED=0 means the OS is reached only through the standard library --
+  # but "smaller" is not "none": file modes, path handling, and what a syscall
+  # returns at the edges all differ, and a PDF reader opens files.
+  #
+  # The test binary is CROSS-BUILT ON THE HOST with the pinned toolchain and
+  # then run in the virtual machine, rather than installing Go inside it. The
+  # package Go a BSD ships is whatever that release froze, which would silently
+  # test a different compiler from every other lane -- and this module's floor
+  # is 1.27.1, so it might not build there at all.
+  bsd:
+    name: ${{ matrix.os }} (vm)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [freebsd, openbsd, netbsd]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.1"
+
+      - name: Cross-build the test binary with the pinned toolchain
+        env:
+          CGO_ENABLED: "0"
+          GOARCH: amd64
+        run: GOOS=${{ matrix.os }} go test -c -o tests.bin .
+
+      - name: Run it on FreeBSD
+        if: matrix.os == 'freebsd'
+        uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          run: ./tests.bin
+
+      - name: Run it on OpenBSD
+        if: matrix.os == 'openbsd'
+        uses: vmactions/openbsd-vm@v1
+        with:
+          usesh: true
+          run: ./tests.bin
+
+      - name: Run it on NetBSD
+        if: matrix.os == 'netbsd'
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          run: ./tests.bin
+
   os-matrix:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # ⛔ ubuntu-24.04-arm is NATIVE arm64 Linux, not emulation. macOS gave
+        # us arm64 already, but on Darwin: a different kernel, a different
+        # libc story and a different scheduler. Most of the world that runs
+        # this will be arm64 Linux -- a server, a Raspberry Pi, a CI runner --
+        # and that was the one arm64 nothing executed.
+        os: [macos-latest, windows-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
