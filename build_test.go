@@ -13,7 +13,7 @@ import (
 // onePage builds a document of one page with the given content, media box and
 // extra page entries, so a test can say exactly what is on the paper and then
 // look at the pixels.
-func onePage(t *testing.T, box [4]float64, content string, extra reader.Dict) *reader.Document {
+func onePage(t testing.TB, box [4]float64, content string, extra reader.Dict) *reader.Document {
 	t.Helper()
 	w := reader.NewWriter("1.7")
 	pagesRef := w.Reserve()
