@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"testing"
+	"time"
 
 	"github.com/go-gfx/gfx/raster"
 	"github.com/go-pdfkit/reader"
@@ -114,4 +115,51 @@ func inked(img *raster.Image) int {
 		}
 	}
 	return n
+}
+
+// pairedBest draws two documents ALTERNATELY and returns the shortest each
+// took, which is what a test comparing the two should ask for.
+//
+// Three runs of one followed by three of the other is enough to fail on a busy
+// machine: the witness can take all three of its turns in a quiet moment and
+// the subject all three of its own under a spike, and the ratio then reports
+// the machine rather than the code. Alternating puts every spike inside one
+// ROUND, where it falls on both sides.
+//
+// Seen once, 2026-10-04: TestAThreeComponentJPEGIsCachedOnItsSampleTriple
+// reported 8.9x at a load average of 59, and the same build passed three times
+// in a row a minute later. The ratio was real and it was a ratio of two
+// different moments.
+//
+// MEASURED, because that failure could not be reproduced on demand. A
+// throwaway test computed the ratio both ways on the same work, forty rounds
+// per scheme per run, under load:
+//
+//	                max of 40    max of 40    max of 40    over 3x
+//	blocked              1.61         2.27         8.80    1 of 120
+//	interleaved          1.53         1.52         1.61    0 of 120
+//
+// The 8.80 is the failure reproduced. The blocked scheme also returned 0.50
+// once, which says the calibrated subject ran twice as fast as the device
+// witness -- impossible for the quantity being measured, and the plainest
+// demonstration that its two minima come from two different moments.
+//
+// A warm-up draw of each is the caller's business, and all three callers do it:
+// the first draw of a page pays for whatever is cached once.
+func pairedBest(t *testing.T, witness, subject *reader.Document, rounds int) (time.Duration, time.Duration) {
+	t.Helper()
+	w, s := time.Duration(1<<62), time.Duration(1<<62)
+	for i := 0; i < rounds; i++ {
+		start := time.Now()
+		draw(t, witness, Options{})
+		if took := time.Since(start); took < w {
+			w = took
+		}
+		start = time.Now()
+		draw(t, subject, Options{})
+		if took := time.Since(start); took < s {
+			s = took
+		}
+	}
+	return w, s
 }

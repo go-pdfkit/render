@@ -11,7 +11,6 @@ import (
 	"image"
 	"image/jpeg"
 	"testing"
-	"time"
 
 	"github.com/go-pdfkit/reader"
 )
@@ -279,20 +278,9 @@ func TestAOneComponentJPEGIsConvertedOncePerLevelRatherThanOncePerPixel(t *testi
 	draw(t, gradientJPEGPage(t, side, device), Options{})
 	draw(t, gradientJPEGPage(t, side, calibrated), Options{})
 
-	best := func(space func(*reader.Writer) reader.Object) time.Duration {
-		d := gradientJPEGPage(t, side, space)
-		out := time.Duration(1 << 62)
-		for i := 0; i < 3; i++ {
-			start := time.Now()
-			draw(t, d, Options{})
-			if took := time.Since(start); took < out {
-				out = took
-			}
-		}
-		return out
-	}
-	witness := best(device)
-	subject := best(calibrated)
+	witness, subject := pairedBest(t,
+		gradientJPEGPage(t, side, device),
+		gradientJPEGPage(t, side, calibrated), 3)
 	if subject > 3*witness {
 		t.Errorf("a calibrated grey JPEG took %v against DeviceGray's %v (%.1fx); "+
 			"the colour space is being asked per pixel rather than per level",
@@ -451,20 +439,9 @@ func TestAThreeComponentJPEGIsCachedOnItsSampleTriple(t *testing.T) {
 	draw(t, rgbJPEGPage(t, side, deviceRGB, fill), Options{})
 	draw(t, rgbJPEGPage(t, side, calRGB, fill), Options{})
 
-	best := func(space func(*reader.Writer) reader.Object) time.Duration {
-		d := rgbJPEGPage(t, side, space, fill)
-		out := time.Duration(1 << 62)
-		for i := 0; i < 3; i++ {
-			start := time.Now()
-			draw(t, d, Options{})
-			if took := time.Since(start); took < out {
-				out = took
-			}
-		}
-		return out
-	}
-	witness := best(deviceRGB)
-	subject := best(calRGB)
+	witness, subject := pairedBest(t,
+		rgbJPEGPage(t, side, deviceRGB, fill),
+		rgbJPEGPage(t, side, calRGB, fill), 3)
 	if subject > 3*witness {
 		t.Errorf("a calibrated RGB JPEG took %v against DeviceRGB's %v (%.1fx); "+
 			"the colour space is being asked per pixel rather than per distinct triple",
@@ -634,20 +611,9 @@ func TestManySmallPicturesDoNotEachPayForTheTable(t *testing.T) {
 	draw(t, manyTinyJPEGsPage(t, n, deviceRGB), Options{})
 	draw(t, manyTinyJPEGsPage(t, n, calRGB), Options{})
 
-	best := func(space func(*reader.Writer) reader.Object) time.Duration {
-		d := manyTinyJPEGsPage(t, n, space)
-		out := time.Duration(1 << 62)
-		for i := 0; i < 3; i++ {
-			start := time.Now()
-			draw(t, d, Options{})
-			if took := time.Since(start); took < out {
-				out = took
-			}
-		}
-		return out
-	}
-	witness := best(deviceRGB)
-	subject := best(calRGB)
+	witness, subject := pairedBest(t,
+		manyTinyJPEGsPage(t, n, deviceRGB),
+		manyTinyJPEGsPage(t, n, calRGB), 3)
 	if subject > 3*witness {
 		t.Errorf("%d small calibrated pictures took %v against DeviceRGB's %v (%.1fx); "+
 			"each picture is paying for its own cache", n, subject, witness,
