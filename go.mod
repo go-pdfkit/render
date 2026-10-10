@@ -3,7 +3,7 @@ module github.com/go-pdfkit/render
 go 1.27.1
 
 require (
-	github.com/go-gfx/gfx v0.34.1
+	github.com/go-gfx/gfx v0.35.0
 	github.com/go-images/jpeg v0.3.0
 	github.com/go-images/jpeg2000 v0.13.3
 	github.com/go-opentype/fonts v0.12.0

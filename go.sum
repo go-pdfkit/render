@@ -2,8 +2,8 @@ github.com/ajroetker/go-highway v0.0.12 h1:OcGp/l/W7WQtH5ELLuNnKXCuR7ePpWGh2RWZI
 github.com/ajroetker/go-highway v0.0.12/go.mod h1:un7fcrwix7UOHJrr18Lgh5eeF+1yaZiGWdTw3FbfDv4=
 github.com/andybalholm/brotli v1.2.6 h1:ftYnfj6usCp+UGV5kSJ3+chpMQgU+gJf/AxsUQ52REI=
 github.com/andybalholm/brotli v1.2.6/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
-github.com/go-gfx/gfx v0.34.1 h1:zXRptZlqRyfE0de/8h9N4Y4cSeySnQB9vWuK+LrwgOM=
-github.com/go-gfx/gfx v0.34.1/go.mod h1:iGZt+HN5CEwr/nPqxxLIAvNBR9pAKhoZl9scGEwQn9M=
+github.com/go-gfx/gfx v0.35.0 h1:AaXMxDMxNB1hROxzx+3EoO06KxsrQUvnw/10olmSgVo=
+github.com/go-gfx/gfx v0.35.0/go.mod h1:qIZS9u2+VnBk5CX7o4f/fQ5uD8c+mPFTtAPE85s8V90=
 github.com/go-images/jpeg v0.3.0 h1:i6CGNbN2YNEz8stBI0hXjN6UwVGwQ9zCh8LvFeD8fHg=
 github.com/go-images/jpeg v0.3.0/go.mod h1:3eUjtNscxUULLUH88DvMN8OKTq2C0/0AjubOjAHoHHk=
 github.com/go-images/jpeg2000 v0.13.3 h1:GSnkQWQ72ANwfi/xYWt3za9Nfss+C1iBbk4uubLWYHw=
