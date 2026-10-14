@@ -2,8 +2,8 @@ github.com/ajroetker/go-highway v0.0.12 h1:OcGp/l/W7WQtH5ELLuNnKXCuR7ePpWGh2RWZI
 github.com/ajroetker/go-highway v0.0.12/go.mod h1:un7fcrwix7UOHJrr18Lgh5eeF+1yaZiGWdTw3FbfDv4=
 github.com/andybalholm/brotli v1.2.6 h1:ftYnfj6usCp+UGV5kSJ3+chpMQgU+gJf/AxsUQ52REI=
 github.com/andybalholm/brotli v1.2.6/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
-github.com/go-gfx/gfx v0.34.1 h1:zXRptZlqRyfE0de/8h9N4Y4cSeySnQB9vWuK+LrwgOM=
-github.com/go-gfx/gfx v0.34.1/go.mod h1:iGZt+HN5CEwr/nPqxxLIAvNBR9pAKhoZl9scGEwQn9M=
+github.com/go-gfx/gfx v0.35.0 h1:AaXMxDMxNB1hROxzx+3EoO06KxsrQUvnw/10olmSgVo=
+github.com/go-gfx/gfx v0.35.0/go.mod h1:qIZS9u2+VnBk5CX7o4f/fQ5uD8c+mPFTtAPE85s8V90=
 github.com/go-images/jpeg v0.3.0 h1:i6CGNbN2YNEz8stBI0hXjN6UwVGwQ9zCh8LvFeD8fHg=
 github.com/go-images/jpeg v0.3.0/go.mod h1:3eUjtNscxUULLUH88DvMN8OKTq2C0/0AjubOjAHoHHk=
 github.com/go-images/jpeg2000 v0.13.3 h1:GSnkQWQ72ANwfi/xYWt3za9Nfss+C1iBbk4uubLWYHw=
@@ -14,8 +14,8 @@ github.com/go-opentype/opentype v0.15.0 h1:ioE3eCbNZavlk/w073J3uX5FKjqhgOHQw+wZZ
 github.com/go-opentype/opentype v0.15.0/go.mod h1:ZB31jTJl2mhPESXYMuUW+p36UrOabw/2+6mtyh/vNnI=
 github.com/go-pdfkit/pdffont v0.4.0 h1:3CV2HnmUGHiIYuZ5dJWRLKvi7hMHGWS1RjgNYkEZ0Gk=
 github.com/go-pdfkit/pdffont v0.4.0/go.mod h1:l7es3IPbKewQF+sSgPh/bQL18jSewoI0cMjttk7uPlc=
-github.com/go-pdfkit/reader v0.7.0 h1:+Fz5i8Zq6beBpTc3pNTbJ3Qf14aroA5txgeVzVGLTSY=
-github.com/go-pdfkit/reader v0.7.0/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
+github.com/go-pdfkit/reader v0.9.0 h1:4U2oZXozJl+1bRyzK90sb6pQB+Qm6dCPjBAk4c71tqU=
+github.com/go-pdfkit/reader v0.9.0/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
 github.com/sergeymakinen/go-bmp v1.0.0 h1:SdGTzp9WvCV0A1V0mBeaS7kQAwNLdVJbmHlqNWq0R+M=
 github.com/sergeymakinen/go-bmp v1.0.0/go.mod h1:/mxlAQZRLxSvJFNIEGGLBE/m40f3ZnUifpgVDlcUIEY=
 github.com/sergeymakinen/go-ico v1.0.0 h1:uL3khgvKkY6WfAetA+RqsguClBuu7HpvBB/nq/Jvr80=
