@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/go-gfx/gfx v0.35.0
 	github.com/go-images/jpeg v0.3.0
-	github.com/go-images/jpeg2000 v0.13.5
+	github.com/go-images/jpeg2000 v0.13.7
 	github.com/go-opentype/fonts v0.12.0
 	github.com/go-opentype/opentype v0.15.0
 	github.com/go-pdfkit/pdffont v0.4.0
