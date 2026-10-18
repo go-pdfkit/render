@@ -51,6 +51,18 @@ type tripleCache struct {
 	// gen is the current image's generation, never zero, so an untouched slot
 	// (which is zero) belongs to no image.
 	gen uint64
+	// asked counts the lookups that found nothing, which is the number of times
+	// the colour space is asked.
+	//
+	// It is this cache's ONLY observable effect. The answers are exact, so a
+	// working table and a broken one draw the same pixels and differ in nothing
+	// else -- which is why a test that pins the speed has to compare two
+	// wall-clock times, and why that comparison is the wrong instrument. On
+	// 2026-10-14 the openbsd-in-qemu lane read 5.2x against a 3x bound while
+	// twelve other lanes passed the same commit, two of them (netbsd, freebsd)
+	// the same nested-VM machinery. Counting is exact everywhere and needs no
+	// witness to divide by.
+	asked uint64
 }
 
 // nextImage makes every slot written so far read as empty, without touching them.
@@ -131,6 +143,7 @@ func (t *tripleCache) lookup(key uint64) (cr, cg, cb uint8, found bool, at int) 
 			return uint8(v >> 16), uint8(v >> 8), uint8(v), true, i
 		}
 	}
+	t.asked++
 	return 0, 0, 0, false, free
 }
 

@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"image/color"
+	"runtime"
 	"testing"
 	"time"
 
@@ -146,6 +147,31 @@ func inked(img *raster.Image) int {
 //
 // A warm-up draw of each is the caller's business, and all three callers do it:
 // the first draw of a page pays for whatever is cached once.
+// drawnBytes is how many bytes drawing one document allocates, which is a
+// COUNTER and not a clock.
+//
+// runtime.TotalAlloc is cumulative and exact -- not sampled, not a rate -- so
+// this is reproducible to a few dozen bytes between runs on one machine, and
+// its ORDER OF MAGNITUDE is the same on every machine. No test in this package
+// calls t.Parallel, so nothing else is allocating while this reads.
+//
+// It exists because pairedBest cannot answer the question it is asked. A ratio
+// of two wall-clock times needs a quiet machine, and the lanes this package
+// gates on include a nested QEMU VM: on 2026-10-14 openbsd read 5.2x against a
+// 3x bound while twelve other lanes passed the same commit, two of them
+// (netbsd, freebsd) the same nested-VM machinery. The properties those bounds
+// stood for -- how often the colour space is asked, how many tables a page
+// allocates -- are countable, and a count cannot be made wrong by a busy host.
+func drawnBytes(t *testing.T, d *reader.Document) uint64 {
+	t.Helper()
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	draw(t, d, Options{})
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
 func pairedBest(t *testing.T, witness, subject *reader.Document, rounds int) (time.Duration, time.Duration) {
 	t.Helper()
 	w, s := time.Duration(1<<62), time.Duration(1<<62)
