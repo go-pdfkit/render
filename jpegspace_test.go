@@ -436,16 +436,45 @@ func TestAThreeComponentJPEGIsCachedOnItsSampleTriple(t *testing.T) {
 		return uint8(200 + x%4), uint8(180 + y%8), uint8(x%16 + y%16*16)
 	}
 	deviceRGB := func(*reader.Writer) reader.Object { return reader.Name("DeviceRGB") }
-	draw(t, rgbJPEGPage(t, side, deviceRGB, fill), Options{})
-	draw(t, rgbJPEGPage(t, side, calRGB, fill), Options{})
 
-	witness, subject := pairedBest(t,
-		rgbJPEGPage(t, side, deviceRGB, fill),
-		rgbJPEGPage(t, side, calRGB, fill), 3)
-	if subject > 3*witness {
-		t.Errorf("a calibrated RGB JPEG took %v against DeviceRGB's %v (%.1fx); "+
-			"the colour space is being asked per pixel rather than per distinct triple",
-			subject, witness, float64(subject)/float64(witness))
+	// THE WITNESS, and what it witnesses is the INSTRUMENT, not a speed. A device
+	// space's samples pass straight through, so it never reaches the cache at all.
+	// A counter incremented anywhere but on the miss -- on every lookup, say --
+	// would not leave this at zero.
+	_, dev, err := renderPage(rgbJPEGPage(t, side, deviceRGB, fill), 1, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dev.triples.asked != 0 {
+		t.Errorf("DeviceRGB asked the colour space %d time(s); its samples pass "+
+			"straight through, so it should never reach the cache", dev.triples.asked)
+	}
+
+	_, cal, err := renderPage(rgbJPEGPage(t, side, calRGB, fill), 1, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pixels = side * side
+	// Measured here: 254 asks for 102 400 pixels, one per 403. Uncached it is
+	// 102 400 exactly, so the two answers are a factor of 403 apart and a
+	// sixteenth of the pixel count refuses the defect with twenty-five times the
+	// room to spare.
+	//
+	// A BOUND rather than the measured 254, because 254 is what the JPEG round
+	// trip happens to leave of the 256 triples the fill writes -- a property of
+	// the encoder, which a Go upgrade is allowed to change. The claim here is
+	// about the cache.
+	const bound = pixels / 16
+	switch {
+	case cal.triples.asked == 0:
+		t.Error("the calibrated space was never asked, so this test witnesses " +
+			"nothing: a calibrated space with no gamma converts for free, and " +
+			"this one carries one on purpose")
+	case cal.triples.asked > bound:
+		t.Errorf("a calibrated RGB JPEG asked the colour space %d times for %d "+
+			"pixels, one ask per %.1f; the colour space is being asked per pixel "+
+			"rather than per distinct triple",
+			cal.triples.asked, pixels, float64(pixels)/float64(cal.triples.asked))
 	}
 }
 
@@ -608,15 +637,24 @@ func manyTinyJPEGsPage(t *testing.T, n int, space func(w *reader.Writer) reader.
 func TestManySmallPicturesDoNotEachPayForTheTable(t *testing.T) {
 	const n = 800
 	deviceRGB := func(*reader.Writer) reader.Object { return reader.Name("DeviceRGB") }
-	draw(t, manyTinyJPEGsPage(t, n, deviceRGB), Options{})
-	draw(t, manyTinyJPEGsPage(t, n, calRGB), Options{})
 
-	witness, subject := pairedBest(t,
-		manyTinyJPEGsPage(t, n, deviceRGB),
-		manyTinyJPEGsPage(t, n, calRGB), 3)
-	if subject > 3*witness {
-		t.Errorf("%d small calibrated pictures took %v against DeviceRGB's %v (%.1fx); "+
-			"each picture is paying for its own cache", n, subject, witness,
-			float64(subject)/float64(witness))
+	// Paired against DeviceRGB, which never reaches the cache, so the DIFFERENCE
+	// is the table and the conversions and nothing else about drawing 800
+	// pictures. Same instinct as the ratio this replaced; exact instrument.
+	witness := drawnBytes(t, manyTinyJPEGsPage(t, n, deviceRGB))
+	subject := drawnBytes(t, manyTinyJPEGsPage(t, n, calRGB))
+
+	// Measured here: 23.6 MB against 28.7 MB, a difference of 5.1 MB, which is
+	// one four-megabyte table and the conversions. One table per PICTURE is 800
+	// of them: 3.2 GB, six hundred times this budget -- so the budget leaves
+	// twelve times the room for everything else while still refusing the defect
+	// by three orders of magnitude.
+	const budget = 64 << 20
+	if subject > witness+budget {
+		t.Errorf("%d small calibrated pictures allocated %.1f MB against "+
+			"DeviceRGB's %.1f MB, %.1f MB more than it; each picture is paying "+
+			"for its own %d MB cache rather than sharing the page's",
+			n, float64(subject)/(1<<20), float64(witness)/(1<<20),
+			float64(subject-witness)/(1<<20), cacheSlots*8/(1<<20))
 	}
 }

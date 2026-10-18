@@ -107,9 +107,21 @@ func (o Options) maxPixels() int {
 
 // Page draws the i'th page of a document, counting from one.
 func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
+	img, _, err := renderPage(d, i, opt)
+	return img, err
+}
+
+// renderPage is Page, and hands back the renderer it used.
+//
+// Page cannot: the renderer is an implementation detail and returning it would
+// make every field of it public API. But a test that wants to know how many
+// times the colour space was asked has to read a counter that lives on it, and
+// the alternative -- a package-level variable the renderer writes into -- is
+// shared state between tests that happen to run in one process.
+func renderPage(d *reader.Document, i int, opt Options) (*raster.Image, *renderer, error) {
 	page, err := d.Page(i)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	box := pageBox(d, page)
 	rotation := pageRotation(d, page)
@@ -128,7 +140,7 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 		wf, hf = hf, wf
 	}
 	if wf*hf > float64(opt.maxPixels()) {
-		return nil, fmt.Errorf("render: page %d would be %.0f by %.0f pixels, past the limit of %d", i, wf, hf, opt.maxPixels())
+		return nil, nil, fmt.Errorf("render: page %d would be %.0f by %.0f pixels, past the limit of %d", i, wf, hf, opt.maxPixels())
 	}
 	w, h := int(wf), int(hf)
 	img := raster.New(w, h)
@@ -152,7 +164,7 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 	// which is what this drew before and what other readers draw.
 	dec, _ := d.PageContentDecoded(i)
 	if len(dec.Data) == 0 && dec.Cause != nil {
-		return nil, dec.Cause
+		return nil, nil, dec.Cause
 	}
 	content := dec.Data
 	resources, _ := d.GetDict(page, "Resources")
@@ -171,9 +183,9 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 		r.drawAnnotations(page, start)
 	}
 	if r.ranOut {
-		return img, ErrTimedOut
+		return img, r, ErrTimedOut
 	}
-	return img, nil
+	return img, r, nil
 }
 
 // fill paints the whole image one colour.
