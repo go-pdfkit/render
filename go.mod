@@ -3,11 +3,11 @@ module github.com/go-pdfkit/render
 go 1.27.1
 
 require (
-	github.com/go-gfx/gfx v0.35.0
+	github.com/go-gfx/gfx v0.36.0
 	github.com/go-images/jpeg v0.3.0
 	github.com/go-images/jpeg2000 v0.13.7
-	github.com/go-opentype/fonts v0.12.0
-	github.com/go-opentype/opentype v0.15.0
+	github.com/go-opentype/fonts v0.14.0
+	github.com/go-opentype/opentype v0.16.0
 	github.com/go-pdfkit/pdffont v0.4.0
 	github.com/go-pdfkit/reader v0.9.0
 )
@@ -18,6 +18,6 @@ require (
 	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/sergeymakinen/go-ico v1.0.0 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
-	golang.org/x/image v0.46.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/image v0.47.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
