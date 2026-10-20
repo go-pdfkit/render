@@ -100,6 +100,25 @@ func TestAPictureThatWillNotDecodeIsNotDrawn(t *testing.T) {
 	}
 }
 
+func TestACodestreamThatCrashedTheDecoderDoesNotCrashThePage(t *testing.T) {
+	// Fourteen bytes: SOC, then SOT with no SIZ before it. Up to
+	// go-images/jpeg2000 v0.13.7 that divided a tile index by a tile count of
+	// nought inside DecodeConfig, which this package calls to size a picture
+	// before decoding it, and nothing here recovers. So any PDF carrying it
+	// took down the program that drew it (found by jpeg2000's FuzzDecode,
+	// fixed in v0.13.8, go-images/jpeg2000#36). It must be left undrawn, as
+	// any other codestream that will not decode is.
+	crasher := []byte{0xFF, 0x4F, 0xFF, 0x90, 0x00, 0x0A, '0', '0', '0', '0', '0', '0', '0', '0'}
+	d := jpxPage(t, crasher, 32, 32)
+	img, err := Page(d, 1, Options{Scale: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ink := inked(img); ink != 0 {
+		t.Errorf("%d pixels drawn from a codestream that is not one", ink)
+	}
+}
+
 func TestTheSizeComesFromThePictureNotTheDictionary(t *testing.T) {
 	// A codestream carries its own size, and where the two disagree the one the
 	// pixels are actually in is the one that can be drawn.
