@@ -7,13 +7,13 @@ require (
 	github.com/go-images/jpeg v0.3.0
 	github.com/go-images/jpeg2000 v0.13.8
 	github.com/go-opentype/fonts v0.14.0
-	github.com/go-opentype/opentype v0.16.0
+	github.com/go-opentype/opentype v0.16.1
 	github.com/go-pdfkit/pdffont v0.4.0
 	github.com/go-pdfkit/reader v0.9.0
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.6 // indirect
+	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/go-simd/highway v0.0.14 // indirect
 	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/sergeymakinen/go-ico v1.0.0 // indirect
