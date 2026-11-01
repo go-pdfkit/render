@@ -86,6 +86,45 @@ its matrix and the transform that drew it both count. Nearly every figure
 a plotting tool writes is a form, so a pattern that stayed at the page's
 origin would miss the shape it was asked to fill by the width of a page.
 
+## Thumbnails, and a strip of them
+
+A page strip wants a hundred small pictures of somebody else's file, quickly
+and without being able to be made to allocate. That is `Page` with three
+options and nothing else:
+
+```go
+img, err := render.Page(doc, i, render.Options{
+    Scale:       0.2,              // device pixels per point: a 612pt page → 122px
+    MaxPixels:   4 << 20,          // what the file may ask to allocate
+    MaxDuration: 2 * time.Second,  // what it may ask to spend
+})
+rgba := img.ToNRGBA()              // for a toolkit that wants image.RGBA
+```
+
+`Scale` is the thumbnail control — device pixels per point, so 0.2 is a fifth
+of the page's own size. `MaxPixels` and `MaxDuration` are the two bounds a
+caller drawing an untrusted file needs: one caps what comes out, the other
+caps the work of making it. ⛔ On a timeout the page comes back **as far as it
+got**, with `ErrTimedOut` — deliberately not a blank, because half a page is
+worth more than nothing to somebody scrolling, and the error says plainly that
+it is half.
+
+**Measured** on a 68-page scanned book, at load average 25 so the figures are
+pessimistic:
+
+| scale | per thumbnail | worst page | pixels in the strip |
+|---|---|---|---|
+| 0.15 | 21.9 ms | 54 ms | 25 394 |
+| 0.25 | 21.7 ms | 93 ms | 69 989 |
+| 0.50 | 20.3 ms | 31 ms | 271 545 |
+
+⛔ **The scale barely moves it, and that is the useful part.** Ten times the
+pixels cost the same, because on a scanned page the time goes into decoding
+the embedded image, not into rasterising it — so for scans, asking for a
+larger thumbnail is nearly free, and asking for a smaller one saves nothing.
+A strip of a hundred is about two seconds; a *virtualised* strip that draws
+only what is on screen is a tenth of that.
+
 ## How it is checked
 
 By writing a PDF whose geometry is known and looking at the pixels that
