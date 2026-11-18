@@ -1,5 +1,5 @@
-github.com/andybalholm/brotli v1.2.8 h1:H9F6r7RNwzSRsx/lytpIYkbjNFMt2yNBwsJ2+0gpx78=
-github.com/andybalholm/brotli v1.2.8/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
+github.com/andybalholm/brotli v1.3.0 h1:IdkhjSe/+34U+fP7FSR2Q6Poj1hnHUa2GoWmzXJd6qY=
+github.com/andybalholm/brotli v1.3.0/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 h1:2tV76y6Q9BB+NEBasnqvs7e49aEBFI8ejC89PSnWH+4=
 github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707/go.mod h1:qssHWj60/X5sZFNxpG4HBPDHVqxNm4DfnCKgrbZOT+s=
 github.com/dsnet/golib v0.0.0-20171103203638-1ea166775780/go.mod h1:Lj+Z9rebOhdfkVLjJ8T6VcRQv3SXugXy999NBtR9aFY=
@@ -11,12 +11,12 @@ github.com/go-images/jpeg2000 v0.14.0 h1:/nH3l5r95E7OkNZCfq7gmoDQvJzVAhmSw6rd2If
 github.com/go-images/jpeg2000 v0.14.0/go.mod h1:4/Pp3Jp2es5lA8/Ema8F7dFwl0vZprCj9MyznIz9Gdc=
 github.com/go-opentype/fonts v0.14.0 h1:WHw7k9gkHT1pu9B2yyvd0FWyQqn/4NKFQoKhvMYt3Mo=
 github.com/go-opentype/fonts v0.14.0/go.mod h1:od2QcmdpKo7QCqo6Jb16y4GULk+h2Hhfq6x3xfvn62Q=
-github.com/go-opentype/opentype v0.21.1 h1:axfaZjo6acnY9OcFHC/q5gaSqyc/KjuaNJ6Z7UBOJPI=
-github.com/go-opentype/opentype v0.21.1/go.mod h1:cyTZyPcwVFR4MTHnCj7a6tk2tGIB6deakpefu/apDjg=
+github.com/go-opentype/opentype v0.22.0 h1:AWxuNf8g6F5lFZ6wrp0Z097yrNANbE0F4b+etGtaWtI=
+github.com/go-opentype/opentype v0.22.0/go.mod h1:xzFnB0oUWXuU1AxQl0CgtQpV8iWY7f5/RRGc9diiBZs=
 github.com/go-pdfkit/pdffont v0.4.0 h1:3CV2HnmUGHiIYuZ5dJWRLKvi7hMHGWS1RjgNYkEZ0Gk=
 github.com/go-pdfkit/pdffont v0.4.0/go.mod h1:l7es3IPbKewQF+sSgPh/bQL18jSewoI0cMjttk7uPlc=
-github.com/go-pdfkit/reader v0.11.0 h1:eJDFA+AWvW/Yo2Y63+wIVylxsq5jFLB7cdnX9tb/1IY=
-github.com/go-pdfkit/reader v0.11.0/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
+github.com/go-pdfkit/reader v0.17.0 h1:17MUgAowqA5G6KJQxOpLSyEgy3qeITkBRgFYA1hbRHQ=
+github.com/go-pdfkit/reader v0.17.0/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
 github.com/go-simd/highway v0.0.14 h1:O3HPG00qgLGlrQyYBlMGyLYsuzZrqHA4+XNptPjV5gs=
 github.com/go-simd/highway v0.0.14/go.mod h1:t5XBPxqa10Lnj0frQS7Ur0JaN+/CckEmm5HXrqBDxXA=
 github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
