@@ -15,8 +15,8 @@ github.com/go-opentype/opentype v0.22.0 h1:AWxuNf8g6F5lFZ6wrp0Z097yrNANbE0F4b+et
 github.com/go-opentype/opentype v0.22.0/go.mod h1:xzFnB0oUWXuU1AxQl0CgtQpV8iWY7f5/RRGc9diiBZs=
 github.com/go-pdfkit/pdffont v0.4.0 h1:3CV2HnmUGHiIYuZ5dJWRLKvi7hMHGWS1RjgNYkEZ0Gk=
 github.com/go-pdfkit/pdffont v0.4.0/go.mod h1:l7es3IPbKewQF+sSgPh/bQL18jSewoI0cMjttk7uPlc=
-github.com/go-pdfkit/reader v0.17.0 h1:17MUgAowqA5G6KJQxOpLSyEgy3qeITkBRgFYA1hbRHQ=
-github.com/go-pdfkit/reader v0.17.0/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
+github.com/go-pdfkit/reader v0.19.1 h1:D0lPFwUbTLsqQPZluKX7ghqgIPaHLOhf/HRAYsWEHog=
+github.com/go-pdfkit/reader v0.19.1/go.mod h1:EYHHREPKT/orDzlGiFPnPVPPuaRDLiAYezIr0cCFXaA=
 github.com/go-simd/highway v0.0.14 h1:O3HPG00qgLGlrQyYBlMGyLYsuzZrqHA4+XNptPjV5gs=
 github.com/go-simd/highway v0.0.14/go.mod h1:t5XBPxqa10Lnj0frQS7Ur0JaN+/CckEmm5HXrqBDxXA=
 github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
