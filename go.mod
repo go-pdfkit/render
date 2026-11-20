@@ -9,7 +9,7 @@ require (
 	github.com/go-opentype/fonts v0.14.0
 	github.com/go-opentype/opentype v0.22.0
 	github.com/go-pdfkit/pdffont v0.4.0
-	github.com/go-pdfkit/reader v0.17.0
+	github.com/go-pdfkit/reader v0.19.1
 )
 
 require (
