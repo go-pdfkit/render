@@ -1,15 +1,15 @@
 module github.com/go-pdfkit/render
 
-go 1.27.1
+go 1.27.4
 
 require (
 	github.com/go-gfx/gfx v0.41.0
 	github.com/go-images/jpeg v0.3.0
 	github.com/go-images/jpeg2000 v0.14.0
 	github.com/go-opentype/fonts v0.14.0
-	github.com/go-opentype/opentype v0.22.0
+	github.com/go-opentype/opentype v0.24.0
 	github.com/go-pdfkit/pdffont v0.4.0
-	github.com/go-pdfkit/reader v0.19.1
+	github.com/go-pdfkit/reader v0.20.0
 )
 
 require (
