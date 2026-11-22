@@ -19,7 +19,9 @@ const (
 )
 
 // run executes a content stream against a graphics state.
-func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
+func (r *renderer) run(content []byte, resources reader.Dict, from gstate) {
+	g := r.frame(from)
+	defer r.release()
 	// These are the innermost resources from here on, and a name they do not
 	// provide is resolved outward -- see renderer.resChain and named().
 	r.resChain = append(r.resChain, resources)
@@ -58,7 +60,7 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			stack = append(stack, g.clone())
 		case "Q":
 			if len(stack) > 0 {
-				g = stack[len(stack)-1]
+				*g = stack[len(stack)-1]
 				stack = stack[:len(stack)-1]
 			}
 		case "cm":
@@ -84,7 +86,7 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 		case "d":
 			g.dash, g.dashPhase = dashPattern(op.Operands)
 		case "gs":
-			r.applyExtGState(&g, op.Operands, resources)
+			r.applyExtGState(g, op.Operands, resources)
 
 		case "m":
 			isRect, segments = false, segments+1
@@ -147,11 +149,7 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			}
 
 		case "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n":
-			var rp *[4]float64
-			if isRect {
-				rp = &rect
-			}
-			r.paintPath(&g, path, op.Operator, clip, resources, rp)
+			r.paintPath(g, path, op.Operator, clip, resources, rect, isRect)
 			path.reset()
 			isRect, segments = false, 0
 			open = false
@@ -162,7 +160,7 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			clip = clipEvenOdd
 
 		case "g", "G", "rg", "RG", "k", "K", "cs", "CS", "sc", "scn", "SC", "SCN":
-			r.setColour(&g, op.Operator, op.Operands, resources)
+			r.setColour(g, op.Operator, op.Operands, resources)
 
 		case "BDC", "BMC":
 			r.mc++
@@ -183,20 +181,20 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			if r.suppressed() {
 				break
 			}
-			r.drawInlineImage(&g, op.Image, resources)
+			r.drawInlineImage(g, op.Image, resources)
 		case "BT", "ET", "Tf", "Tc", "Tw", "Tz", "TL", "Ts", "Tr",
 			"Td", "TD", "Tm", "T*", "Tj", "TJ", "'", "\"":
-			r.runText(&g, op.Operator, op.Operands, resources)
+			r.runText(g, op.Operator, op.Operands, resources)
 		case "sh":
 			if r.suppressed() {
 				break
 			}
-			r.drawShading(&g, op.Operands, resources)
+			r.drawShading(g, op.Operands, resources)
 		case "Do":
 			if r.suppressed() {
 				break
 			}
-			r.drawXObject(&g, op.Operands, resources)
+			r.drawXObject(g, op.Operands, resources)
 		}
 	}
 }
@@ -246,7 +244,7 @@ func addRect(path *userPath, n []float64) {
 
 // paintPath draws the path that has been built, in whichever of the ten ways
 // the operator asks for, and then narrows the clip if one was pending.
-func (r *renderer) paintPath(g *gstate, path *userPath, op string, clip pendingClip, resources reader.Dict, rect *[4]float64) {
+func (r *renderer) paintPath(g *gstate, path *userPath, op string, clip pendingClip, resources reader.Dict, rect [4]float64, isRect bool) {
 	switch op {
 	case "s", "b", "b*":
 		path.closePath()
@@ -269,7 +267,7 @@ func (r *renderer) paintPath(g *gstate, path *userPath, op string, clip pendingC
 	if clip == clipEvenOdd {
 		rule = vector.EvenOdd
 	}
-	dev.clipPath(g, path, g.ctm, rule, rect)
+	dev.clipPath(g, path, g.ctm, rule, rect, isRect)
 }
 
 // fills reports whether a painting operator fills.

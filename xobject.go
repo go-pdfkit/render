@@ -49,7 +49,8 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 	if err != nil || img != "" {
 		return
 	}
-	inner := g.clone()
+	inner := r.frame(g.clone())
+	defer r.release()
 	if arr, ok := reader.ToArray(resolve(r.doc, stream.Dict.Get("Matrix"))); ok && len(arr) == 6 {
 		n := make([]float64, 6)
 		for i := range n {
@@ -65,7 +66,7 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 	// is also as far as the form can reach.
 	box, hasBox := rectangle(r.doc, stream.Dict.Get("BBox"))
 	if hasBox {
-		r.clipToBox(&inner, box)
+		r.clipToBox(inner, box)
 	}
 	resources, ok := r.doc.GetDict(stream.Dict, "Resources")
 	if !ok {
@@ -79,9 +80,9 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 	r.base = inner.ctm
 	r.depth++
 	if r.isGroup(stream) && (g.fillAlpha < 1 || g.softMask != nil) {
-		r.runGroup(g, content, resources, inner, box, hasBox)
+		r.runGroup(g, content, resources, *inner, box, hasBox)
 	} else {
-		r.run(content, resources, inner)
+		r.run(content, resources, *inner)
 	}
 	r.depth--
 	r.base = was
@@ -111,17 +112,12 @@ func (r *renderer) runGroup(g *gstate, content []byte, resources reader.Dict, in
 	// Inside a group the alpha starts again at one and the mask is set aside,
 	// since both are about to be applied to the result instead.
 	inner.fillAlpha, inner.strokeAlpha, inner.softMask = 1, 1, nil
-	var bbox *[4]float64
-	if hasBox {
-		bbox = &box
-	}
 	dev := r.device()
-	token, ok := dev.beginGroup(g, inner.ctm, bbox)
-	if !ok {
+	if !dev.beginGroup(g, inner.ctm, box, hasBox) {
 		return
 	}
 	r.run(content, resources, inner)
-	dev.endGroup(g, token)
+	dev.endGroup(g)
 }
 
 // boxBounds is the part of the image a rectangle in user space can reach.
@@ -145,7 +141,7 @@ func (r *renderer) clipToBox(g *gstate, box [4]float64) {
 	p.lineTo(box[2], box[3])
 	p.lineTo(box[0], box[3])
 	p.closePath()
-	r.device().clipPath(g, p, g.ctm, vector.NonZero, nil)
+	r.device().clipPath(g, p, g.ctm, vector.NonZero, [4]float64{}, false)
 }
 
 // drawImageXObject decodes an image and puts it on the page. A stencil mask

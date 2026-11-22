@@ -30,9 +30,10 @@ type device interface {
 	// given in device pixels: how a face carried in one weight is made bold.
 	embolden(g *gstate, p *userPath, m geometry.Matrix, width float64, resources reader.Dict)
 	// clipPath narrows the clip of g to p, mapped by m. rect is the path's own
-	// x, y, width, height when it was exactly one rectangle, which a device may
-	// use to clip without building the shape; it is nil otherwise.
-	clipPath(g *gstate, p *userPath, m geometry.Matrix, rule vector.FillRule, rect *[4]float64)
+	// x, y, width, height when isRect says it was exactly one rectangle, which a
+	// device may use to clip without building the shape. They are values, not a
+	// pointer, because a pointer given to an interface method escapes.
+	clipPath(g *gstate, p *userPath, m geometry.Matrix, rule vector.FillRule, rect [4]float64, isRect bool)
 	// image paints a decoded picture, straight alpha, over the unit square of
 	// g's transform.
 	image(g *gstate, s *sampled)
@@ -40,11 +41,12 @@ type device interface {
 	shade(g *gstate, sh *shading)
 	// beginGroup opens a transparency group: a form whose content is to be
 	// composed as one thing. ctm is the transform inside the form and box its
-	// bounding box in that space, nil when it has none. ok is false when the
-	// group can reach nothing, and nothing is to be run. endGroup closes it and
-	// composes the result at the alpha and soft mask of g.
-	beginGroup(g *gstate, ctm geometry.Matrix, box *[4]float64) (token any, ok bool)
-	endGroup(g *gstate, token any)
+	// bounding box in that space, when hasBox says it has one. ok is false when the
+	// group can reach nothing, and nothing is to be run. endGroup closes the
+	// group opened last and composes the result at the alpha and soft mask of g;
+	// groups nest, so a device keeps them as a stack.
+	beginGroup(g *gstate, ctm geometry.Matrix, box [4]float64, hasBox bool) (ok bool)
+	endGroup(g *gstate)
 }
 
 // device is the one in force, which is a rasteriser unless the renderer was
@@ -179,9 +181,9 @@ func (d rasterDevice) embolden(g *gstate, p *userPath, m geometry.Matrix, width 
 	}
 }
 
-func (d rasterDevice) clipPath(g *gstate, p *userPath, m geometry.Matrix, rule vector.FillRule, rect *[4]float64) {
+func (d rasterDevice) clipPath(g *gstate, p *userPath, m geometry.Matrix, rule vector.FillRule, rect [4]float64, isRect bool) {
 	r := d.r
-	if rect != nil {
+	if isRect {
 		if dr := r.deviceRect(g, rect[:]); dr != nil {
 			// The shape is a rectangle and was known to be one before it was
 			// built, so it need not be rasterised to be clipped with.
@@ -212,14 +214,14 @@ type rasterGroup struct {
 	wasPainted []float32
 }
 
-func (d rasterDevice) beginGroup(g *gstate, ctm geometry.Matrix, box *[4]float64) (any, bool) {
+func (d rasterDevice) beginGroup(g *gstate, ctm geometry.Matrix, box [4]float64, hasBox bool) bool {
 	r := d.r
 	region := image.Rect(0, 0, r.img.W, r.img.H)
-	if box != nil {
-		region = boxBounds(ctm, *box, r.img.W, r.img.H)
+	if hasBox {
+		region = boxBounds(ctm, box, r.img.W, r.img.H)
 	}
 	if region.Empty() {
-		return nil, false
+		return false
 	}
 	// Only the part of the page the form's own box can reach is kept and put
 	// back, since that is as far as anything inside it can draw.
@@ -231,17 +233,19 @@ func (d rasterDevice) beginGroup(g *gstate, ctm geometry.Matrix, box *[4]float64
 	}
 	// How much of the group reached each pixel, kept only when this group is
 	// itself inside a mask that asks that question.
-	grp := &rasterGroup{region: region, before: before, wasPainted: r.painted}
+	grp := rasterGroup{region: region, before: before, wasPainted: r.painted}
 	if grp.wasPainted != nil {
 		grp.covered = make([]float32, r.img.W*r.img.H)
 	}
 	r.painted = grp.covered
-	return grp, true
+	r.groups = append(r.groups, grp)
+	return true
 }
 
-func (d rasterDevice) endGroup(g *gstate, token any) {
+func (d rasterDevice) endGroup(g *gstate) {
 	r := d.r
-	grp := token.(*rasterGroup)
+	grp := r.groups[len(r.groups)-1]
+	r.groups = r.groups[:len(r.groups)-1]
 	r.painted = grp.wasPainted
 	region, before, covered, wasPainted := grp.region, grp.before, grp.covered, grp.wasPainted
 	w, h := region.Dx(), region.Dy()

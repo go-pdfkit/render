@@ -144,15 +144,16 @@ func (r *renderer) drawAppearance(base gstate, stream *reader.Stream, rect [4]fl
 		return
 	}
 
-	inner := base.clone()
+	inner := r.frame(base.clone())
+	defer r.release()
 	inner.ctm = base.ctm.Mul(fit).Mul(form)
-	r.clipToBox(&inner, box)
+	r.clipToBox(inner, box)
 
 	resources, _ := r.doc.GetDict(stream.Dict, "Resources")
 	was := r.base
 	r.base = inner.ctm
 	r.depth++
-	r.run(content, resources, inner)
+	r.run(content, resources, *inner)
 	r.depth--
 	r.base = was
 }

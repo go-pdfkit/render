@@ -67,7 +67,7 @@ func TestARectangleClipIsCarriedAsARectangleOnlyWhenAxisAligned(t *testing.T) {
 	} {
 		r := &renderer{img: raster.New(40, 40)}
 		g := &gstate{ctm: c.ctm}
-		r.device().clipPath(g, square, g.ctm, vector.NonZero, &rect)
+		r.device().clipPath(g, square, g.ctm, vector.NonZero, rect, true)
 		if g.clip == nil {
 			t.Fatalf("%s: no clip was made", c.name)
 		}
@@ -86,11 +86,15 @@ func TestAGroupBoxOffThePageReachesNothing(t *testing.T) {
 	r := &renderer{img: raster.New(10, 10)}
 	g := &gstate{}
 	ctm := geometry.Matrix{Xx: 1, Yy: 1}
-	if tok, ok := r.device().beginGroup(g, ctm, &[4]float64{100, 100, 110, 110}); ok || tok != nil {
-		t.Errorf("a box off the page opened a group: token %v, ok %v", tok, ok)
+	if r.device().beginGroup(g, ctm, [4]float64{100, 100, 110, 110}, true) || len(r.groups) != 0 {
+		t.Errorf("a box off the page opened a group: %d open", len(r.groups))
 	}
-	if tok, ok := r.device().beginGroup(g, ctm, &[4]float64{0, 0, 5, 5}); !ok || tok == nil {
-		t.Errorf("a box on the page did not open a group: token %v, ok %v", tok, ok)
+	if !r.device().beginGroup(g, ctm, [4]float64{0, 0, 5, 5}, true) || len(r.groups) != 1 {
+		t.Errorf("a box on the page did not open a group: %d open", len(r.groups))
+	}
+	r.device().endGroup(g)
+	if len(r.groups) != 0 {
+		t.Errorf("closing the group left %d open", len(r.groups))
 	}
 }
 
@@ -102,11 +106,11 @@ type recorder struct {
 	began, ended, fill int
 }
 
-func (d *recorder) beginGroup(*gstate, geometry.Matrix, *[4]float64) (any, bool) {
+func (d *recorder) beginGroup(*gstate, geometry.Matrix, [4]float64, bool) bool {
 	d.began++
-	return nil, d.open
+	return d.open
 }
-func (d *recorder) endGroup(*gstate, any) { d.ended++ }
+func (d *recorder) endGroup(*gstate) { d.ended++ }
 func (d *recorder) fillPath(*gstate, *userPath, geometry.Matrix, vector.FillRule, reader.Dict) {
 	d.fill++
 }
@@ -129,4 +133,94 @@ func TestAGroupThatReachesNothingRunsNothing(t *testing.T) {
 				c.open, d.began, d.fill, d.ended, c.began, c.fill, c.ending)
 		}
 	}
+}
+
+// A path is mapped by the matrix in force where it is PAINTED, not where it was
+// written. A `cm` between the last segment and the painting operator is
+// non-conforming (ISO 32000-1, Figure 9: the operators of a path object may not be
+// interleaved with others), so a file has no business doing it, but a reader has to
+// do something, and both references do the same thing: poppler maps at paint time
+// (Gfx.cc doFill/doStroke over GfxState::getCTM, Splash.cc fillWithPattern's
+// matrix) and MuPDF maps at paint time (pdf-op-run.c pdf_show_path with gstate.ctm).
+// This renderer used to map each point as it arrived; it follows the references
+// now, and this test pins it.
+func TestAPathIsMappedWhereItIsPainted(t *testing.T) {
+	for _, c := range []struct {
+		name, content string
+	}{
+		{"fill", "10 10 20 20 re 2 0 0 2 0 0 cm f"},
+		{"path built with lines", "10 10 m 30 10 l 30 30 l 10 30 l h 2 0 0 2 0 0 cm f"},
+	} {
+		d := onePage(t, [4]float64{0, 0, 100, 100}, c.content, nil)
+		img := draw(t, d, Options{})
+		// 20..60 in both axes once doubled; the page is 100 high, so the square
+		// spans y = 40..80 down the image. Mapped as it was written it would span
+		// 10..30 across and 70..90 down.
+		wantBlack(t, img, 40, 60)
+		wantWhite(t, img, 15, 80)
+		wantWhite(t, img, 70, 60)
+	}
+}
+
+// A glyph drawn while another is being drawn leaves the outer one alone. That
+// happens when the glyph is filled with a pattern whose cell shows text: the
+// outline buffer is lent to one glyph at a time, and the outer glyph is still
+// stroked after its fill.
+func TestAGlyphShownInsideAGlyphLeavesTheOuterOutline(t *testing.T) {
+	_, f := fontOf(t, reader.Dict{"BaseFont": reader.Name("Helvetica")})
+	outer, inner := 'O', 'l'
+	want := map[rune]int{}
+	for _, code := range []rune{outer, inner} {
+		segs, ok := f.glyph(int(code))
+		if !ok || len(segs) == 0 {
+			t.Fatalf("no outline for %q", code)
+		}
+		want[code] = len(segs)
+	}
+	if want[outer] == want[inner] {
+		t.Fatal("the two glyphs need outlines of different lengths for this test to see a mix-up")
+	}
+
+	r := &renderer{fonts: map[int]*pdfFont{}}
+	d := &reentrant{r: r, f: f, inner: int(inner)}
+	r.dev = d
+	g := &gstate{ctm: geometry.Matrix{Xx: 1, Yy: 1}, fillAlpha: 1, strokeAlpha: 1}
+	g.text.size, g.text.scale, g.text.mode = 10, 1, modeFillStroke
+	// A glyph drawn beforehand leaves the buffer on the renderer for the next
+	// one to reuse, which is the case that matters: with no buffer yet, the inner
+	// glyph would make its own and nothing would be shared.
+	d.fills = 1
+	r.drawGlyph(g, f, int(inner), nil)
+	if r.glyphPath == nil {
+		t.Fatal("the buffer was not kept for the next glyph")
+	}
+	d.fills, d.stroked = 0, nil
+	r.drawGlyph(g, f, int(outer), nil)
+
+	// The inner glyph is stroked first, since it is drawn inside the outer fill.
+	got := d.stroked
+	if len(got) != 2 || got[0] != want[inner] || got[1] != want[outer] {
+		t.Errorf("stroked outlines had %v segments, want [%d %d]", got, want[inner], want[outer])
+	}
+}
+
+// A reentrant device shows another glyph in the middle of the first fill, as a
+// pattern cell with text of its own does, and records what each stroke was given.
+type reentrant struct {
+	rasterDevice
+	r       *renderer
+	f       *pdfFont
+	inner   int
+	fills   int
+	stroked []int
+}
+
+func (d *reentrant) fillPath(g *gstate, _ *userPath, _ geometry.Matrix, _ vector.FillRule, res reader.Dict) {
+	if d.fills++; d.fills == 1 {
+		d.r.drawGlyph(g, d.f, d.inner, res)
+	}
+}
+
+func (d *reentrant) strokePath(_ *gstate, p *userPath, _ geometry.Matrix, _ reader.Dict) {
+	d.stroked = append(d.stroked, len(p.segs))
 }

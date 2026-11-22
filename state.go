@@ -66,8 +66,33 @@ func (g gstate) clone() gstate {
 	return out
 }
 
+// frame lends a graphics state that lives as long as the caller keeps it, holding
+// a copy of g, and release gives it back. The device takes the state by pointer,
+// and a pointer given to an interface method escapes: a state declared on the
+// stack of every form, glyph and tile would cost an allocation each, where a
+// frame reused from the one before costs none. Frames are taken and returned in
+// nesting order.
+func (r *renderer) frame(g gstate) *gstate {
+	if r.framesUsed == len(r.frames) {
+		r.frames = append(r.frames, new(gstate))
+	}
+	f := r.frames[r.framesUsed]
+	r.framesUsed++
+	*f = g
+	return f
+}
+
+// release returns the frame last taken.
+func (r *renderer) release() { r.framesUsed-- }
+
 // A renderer draws one page.
 type renderer struct {
+	// frames are the graphics states lent by frame(), framesUsed of them out.
+	frames     []*gstate
+	framesUsed int
+	// groups are the transparency groups open, innermost last: see rasterGroup.
+	groups []rasterGroup
+
 	doc *reader.Document
 	img *raster.Image
 	rz  vector.Rasterizer
