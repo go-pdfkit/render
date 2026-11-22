@@ -19,7 +19,9 @@ const (
 )
 
 // run executes a content stream against a graphics state.
-func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
+func (r *renderer) run(content []byte, resources reader.Dict, from gstate) {
+	g := r.frame(from)
+	defer r.release()
 	// These are the innermost resources from here on, and a name they do not
 	// provide is resolved outward -- see renderer.resChain and named().
 	r.resChain = append(r.resChain, resources)
@@ -31,12 +33,17 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 	r.mc, r.hideAt = 0, 0
 	defer func() { r.mc, r.hideAt = mc, hideAt }()
 	stack := []gstate{}
-	path := vector.NewPath()
+	// The path is kept in user space, where the operators wrote it: the device
+	// maps it when the painting operator arrives. It is reused from one paint to
+	// the next.
+	path := &userPath{}
 	var start, current geometry.Point
 	var open bool
 	clip := noClip
-	// rect is the path so far when it is exactly one `re` and nothing else.
-	var rect *vector.Rect
+	// rect is the path so far when it is exactly one `re` and nothing else:
+	// x, y, width, height, in user space. isRect says it is set.
+	var rect [4]float64
+	var isRect bool
 	segments := 0
 
 	ops, _ := reader.Operations(content)
@@ -53,7 +60,7 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			stack = append(stack, g.clone())
 		case "Q":
 			if len(stack) > 0 {
-				g = stack[len(stack)-1]
+				*g = stack[len(stack)-1]
 				stack = stack[:len(stack)-1]
 			}
 		case "cm":
@@ -79,72 +86,72 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 		case "d":
 			g.dash, g.dashPhase = dashPattern(op.Operands)
 		case "gs":
-			r.applyExtGState(&g, op.Operands, resources)
+			r.applyExtGState(g, op.Operands, resources)
 
 		case "m":
-			rect, segments = nil, segments+1
+			isRect, segments = false, segments+1
 			if len(n) >= 2 {
-				current = r.point(&g, n[0], n[1])
+				current = geometry.Point{X: n[0], Y: n[1]}
 				start = current
-				path.MoveTo(current.X, current.Y)
+				path.moveTo(current.X, current.Y)
 				open = true
 			}
 		case "l":
-			rect, segments = nil, segments+1
+			isRect, segments = false, segments+1
 			if len(n) >= 2 && open {
-				current = r.point(&g, n[0], n[1])
-				path.LineTo(current.X, current.Y)
+				current = geometry.Point{X: n[0], Y: n[1]}
+				path.lineTo(current.X, current.Y)
 			}
 		case "c":
-			rect, segments = nil, segments+1
+			isRect, segments = false, segments+1
 			if len(n) >= 6 && open {
-				a := r.point(&g, n[0], n[1])
-				b := r.point(&g, n[2], n[3])
-				current = r.point(&g, n[4], n[5])
-				path.CubicTo(a.X, a.Y, b.X, b.Y, current.X, current.Y)
+				a := geometry.Point{X: n[0], Y: n[1]}
+				b := geometry.Point{X: n[2], Y: n[3]}
+				current = geometry.Point{X: n[4], Y: n[5]}
+				path.cubicTo(a, b, current)
 			}
 		case "v":
-			rect, segments = nil, segments+1
+			isRect, segments = false, segments+1
 			if len(n) >= 4 && open {
-				b := r.point(&g, n[0], n[1])
-				end := r.point(&g, n[2], n[3])
-				path.CubicTo(current.X, current.Y, b.X, b.Y, end.X, end.Y)
+				b := geometry.Point{X: n[0], Y: n[1]}
+				end := geometry.Point{X: n[2], Y: n[3]}
+				path.cubicTo(current, b, end)
 				current = end
 			}
 		case "y":
-			rect, segments = nil, segments+1
+			isRect, segments = false, segments+1
 			if len(n) >= 4 && open {
-				a := r.point(&g, n[0], n[1])
-				end := r.point(&g, n[2], n[3])
-				path.CubicTo(a.X, a.Y, end.X, end.Y, end.X, end.Y)
+				a := geometry.Point{X: n[0], Y: n[1]}
+				end := geometry.Point{X: n[2], Y: n[3]}
+				path.cubicTo(a, end, end)
 				current = end
 			}
 		case "h":
-			rect, segments = nil, segments+1
+			isRect, segments = false, segments+1
 			if open {
-				path.Close()
+				path.closePath()
 				current = start
 			}
 		case "re":
 			// A `re` short of its four numbers builds nothing, so it must
 			// not be taken for a rectangle either.
 			if segments == 0 && len(n) >= 4 {
-				rect = r.deviceRect(&g, n)
+				rect, isRect = [4]float64{n[0], n[1], n[2], n[3]}, true
 			} else {
-				rect = nil
+				isRect = false
 			}
 			segments++
 			if len(n) >= 4 {
-				r.rectangle(&g, path, n)
-				current = r.point(&g, n[0], n[1])
+				addRect(path, n)
+				current = geometry.Point{X: n[0], Y: n[1]}
 				start = current
 				open = true
 			}
 
 		case "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n":
-			r.paintPath(&g, path, op.Operator, clip, resources, rect)
-			path = vector.NewPath()
-			rect, segments = nil, 0
+			r.paintPath(g, path, op.Operator, clip, resources, rect, isRect)
+			path.reset()
+			isRect, segments = false, 0
 			open = false
 			clip = noClip
 		case "W":
@@ -153,7 +160,7 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			clip = clipEvenOdd
 
 		case "g", "G", "rg", "RG", "k", "K", "cs", "CS", "sc", "scn", "SC", "SCN":
-			r.setColour(&g, op.Operator, op.Operands, resources)
+			r.setColour(g, op.Operator, op.Operands, resources)
 
 		case "BDC", "BMC":
 			r.mc++
@@ -174,20 +181,20 @@ func (r *renderer) run(content []byte, resources reader.Dict, g gstate) {
 			if r.suppressed() {
 				break
 			}
-			r.drawInlineImage(&g, op.Image, resources)
+			r.drawInlineImage(g, op.Image, resources)
 		case "BT", "ET", "Tf", "Tc", "Tw", "Tz", "TL", "Ts", "Tr",
 			"Td", "TD", "Tm", "T*", "Tj", "TJ", "'", "\"":
-			r.runText(&g, op.Operator, op.Operands, resources)
+			r.runText(g, op.Operator, op.Operands, resources)
 		case "sh":
 			if r.suppressed() {
 				break
 			}
-			r.drawShading(&g, op.Operands, resources)
+			r.drawShading(g, op.Operands, resources)
 		case "Do":
 			if r.suppressed() {
 				break
 			}
-			r.drawXObject(&g, op.Operands, resources)
+			r.drawXObject(g, op.Operands, resources)
 		}
 	}
 }
@@ -226,42 +233,32 @@ func (r *renderer) deviceRect(g *gstate, n []float64) *vector.Rect {
 
 // rectangle adds the four corners of a re operator, which is a closed subpath
 // of its own.
-func (r *renderer) rectangle(g *gstate, path *vector.Path, n []float64) {
+func addRect(path *userPath, n []float64) {
 	x, y, w, h := n[0], n[1], n[2], n[3]
-	corners := [][2]float64{{x, y}, {x + w, y}, {x + w, y + h}, {x, y + h}}
-	for i, c := range corners {
-		p := r.point(g, c[0], c[1])
-		if i == 0 {
-			path.MoveTo(p.X, p.Y)
-			continue
-		}
-		path.LineTo(p.X, p.Y)
-	}
-	path.Close()
+	path.moveTo(x, y)
+	path.lineTo(x+w, y)
+	path.lineTo(x+w, y+h)
+	path.lineTo(x, y+h)
+	path.closePath()
 }
 
 // paintPath draws the path that has been built, in whichever of the ten ways
 // the operator asks for, and then narrows the clip if one was pending.
-func (r *renderer) paintPath(g *gstate, path *vector.Path, op string, clip pendingClip, resources reader.Dict, rect *vector.Rect) {
+func (r *renderer) paintPath(g *gstate, path *userPath, op string, clip pendingClip, resources reader.Dict, rect [4]float64, isRect bool) {
 	switch op {
 	case "s", "b", "b*":
-		path.Close()
+		path.closePath()
 	}
 	rule := vector.NonZero
 	if op == "f*" || op == "B*" || op == "b*" {
 		rule = vector.EvenOdd
 	}
+	dev := r.device()
 	if fills(op) && !r.suppressed() {
-		cov, ox, oy, w, h, ok := r.rz.Fill(path, rule, r.img.W, r.img.H)
-		if ok {
-			r.paintCoverage(g, g.fillPattern, cov, ox, oy, w, h, g.fill, g.fillAlpha, resources)
-		}
+		dev.fillPath(g, path, g.ctm, rule, resources)
 	}
 	if strokes(op) && !r.suppressed() {
-		cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, r.strokeStyle(g), r.img.W, r.img.H)
-		if ok {
-			r.paintCoverage(g, g.strokePattern, cov, ox, oy, w, h, g.stroke, g.strokeAlpha, resources)
-		}
+		dev.strokePath(g, path, g.ctm, resources)
 	}
 	if clip == noClip {
 		return
@@ -270,15 +267,7 @@ func (r *renderer) paintPath(g *gstate, path *vector.Path, op string, clip pendi
 	if clip == clipEvenOdd {
 		rule = vector.EvenOdd
 	}
-	if rect != nil {
-		// The shape is a rectangle and was known to be one before it was
-		// built, so it need not be rasterised to be clipped with.
-		ox, oy, w, h, ok := rect.Box(r.img.W, r.img.H)
-		r.narrowRect(g, *rect, ox, oy, w, h, ok)
-		return
-	}
-	cov, ox, oy, w, h, ok := r.rz.Fill(path, rule, r.img.W, r.img.H)
-	r.narrow(g, cov, ox, oy, w, h, ok)
+	dev.clipPath(g, path, g.ctm, rule, rect, isRect)
 }
 
 // fills reports whether a painting operator fills.

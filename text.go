@@ -191,44 +191,44 @@ func (r *renderer) drawGlyph(g *gstate, f *pdfFont, code int, resources reader.D
 		// where it was going.
 		m = m.Mul(geometry.Matrix{Xx: 1, Yy: 1, Yx: fauxSlant})
 	}
-	path := vector.NewPath()
-	at := func(p opentype.Point) geometry.Point {
-		return m.TransformPoint(geometry.Point{X: p.X, Y: p.Y})
+	// The outline stays in the glyph's own units; the device maps it by m. The
+	// buffer is taken off the renderer while this glyph is drawn, because a
+	// pattern painted through the glyph can show text of its own.
+	path := r.glyphPath
+	r.glyphPath = nil
+	if path == nil {
+		path = &userPath{}
 	}
+	path.reset()
 	for _, seg := range segs {
 		switch seg.Op {
 		case opentype.SegMoveTo:
-			p := at(seg.P[0])
-			path.MoveTo(p.X, p.Y)
+			path.moveTo(seg.P[0].X, seg.P[0].Y)
 		case opentype.SegLineTo:
-			p := at(seg.P[0])
-			path.LineTo(p.X, p.Y)
+			path.lineTo(seg.P[0].X, seg.P[0].Y)
 		case opentype.SegQuadTo:
-			c, p := at(seg.P[0]), at(seg.P[1])
-			path.QuadTo(c.X, c.Y, p.X, p.Y)
+			path.quadTo(seg.P[0].X, seg.P[0].Y, seg.P[1].X, seg.P[1].Y)
 		case opentype.SegClose:
-			path.Close()
+			path.closePath()
 		}
 	}
-	r.paintGlyph(g, path, resources)
+	r.paintGlyph(g, path, m, resources)
 	if f.embolden {
 		// A face carried in one weight is made bold by drawing its outline as
 		// well as filling it.
-		r.thicken(g, path, resources)
+		r.thicken(g, path, m, resources)
 	}
+	r.glyphPath = path
 }
 
 // thicken strokes a glyph's outline in the colour it was filled with, which is
 // what makes a face carried in one weight read as bold.
-func (r *renderer) thicken(g *gstate, path *vector.Path, resources reader.Dict) {
+func (r *renderer) thicken(g *gstate, path *userPath, m geometry.Matrix, resources reader.Dict) {
 	width := fauxBoldWidth * g.text.size * emScale(g)
 	if width <= 0 {
 		return
 	}
-	style := vector.StrokeStyle{Width: width, Cap: vector.RoundCap, Join: vector.RoundJoin}
-	if cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, style, r.img.W, r.img.H); ok {
-		r.paintCoverage(g, g.fillPattern, cov, ox, oy, w, h, g.fill, g.fillAlpha, resources)
-	}
+	r.device().embolden(g, path, m, width, resources)
 }
 
 // emScale is how many device pixels an em of text space comes to, which is
@@ -240,16 +240,13 @@ func emScale(g *gstate) float64 {
 }
 
 // paintGlyph fills or strokes a glyph, in whichever way the text state says.
-func (r *renderer) paintGlyph(g *gstate, path *vector.Path, resources reader.Dict) {
+func (r *renderer) paintGlyph(g *gstate, path *userPath, m geometry.Matrix, resources reader.Dict) {
+	dev := r.device()
 	if g.text.mode == modeFill || g.text.mode == modeFillStroke {
-		if cov, ox, oy, w, h, ok := r.rz.Fill(path, vector.NonZero, r.img.W, r.img.H); ok {
-			r.paintCoverage(g, g.fillPattern, cov, ox, oy, w, h, g.fill, g.fillAlpha, resources)
-		}
+		dev.fillPath(g, path, m, vector.NonZero, resources)
 	}
 	if g.text.mode == modeStroke || g.text.mode == modeFillStroke {
-		if cov, ox, oy, w, h, ok := r.rz.StrokeWith(path, r.strokeStyle(g), r.img.W, r.img.H); ok {
-			r.paintCoverage(g, g.strokePattern, cov, ox, oy, w, h, g.stroke, g.strokeAlpha, resources)
-		}
+		dev.strokePath(g, path, m, resources)
 	}
 }
 

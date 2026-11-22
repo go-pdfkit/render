@@ -161,8 +161,7 @@ func (r *renderer) drawShading(g *gstate, operands []reader.Object, resources re
 	if sh == nil {
 		return
 	}
-	cov, ox, oy, w, h := r.wholeClip(g)
-	r.paintShading(g, sh, g.ctm, cov, ox, oy, w, h, g.fillAlpha)
+	r.device().shade(g, sh)
 }
 
 // paintCoverage puts a rasterised shape on the page in the colour in force --

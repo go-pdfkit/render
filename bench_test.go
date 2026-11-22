@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/go-pdfkit/reader"
 )
 
 // Benchmarks, because the question "would SIMD make this faster" cannot be
@@ -95,6 +97,47 @@ func BenchmarkPageColourChanges(b *testing.B) {
 		g := float64(i%100) / 100
 		fmt.Fprintf(&sb, "%.2f %.2f %.2f rg %.1f %.1f 6 6 re f\n",
 			g, 1-g, g/2, float64(i%80)*7, float64(i/80)*7)
+	}
+	d := onePage(b, [4]float64{0, 0, 595, 842}, sb.String(), nil)
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := Page(d, 1, Options{DPI: 150}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// A page of text: outline loading, the glyph path, and the rasteriser, at 150
+// dots to the inch. The font is the embedded TrueType the text tests use.
+func BenchmarkPageText(b *testing.B) {
+	var sb strings.Builder
+	sb.WriteString("BT /F 9 Tf 9 TL 10 800 Td\n")
+	for range 80 {
+		sb.WriteString("(The quick brown fox jumps over the lazy dog 0123456789) Tj T*\n")
+	}
+	sb.WriteString("ET\n")
+	d := pageWithFont(b, sb.String(), reader.Dict{"MediaBox": reader.Array{
+		reader.Integer(0), reader.Integer(0), reader.Integer(595), reader.Integer(842)}})
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := Page(d, 1, Options{DPI: 150}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// Clips, which a form or a chart sets over and over: rectangles, which are
+// carried as four numbers, and curves, which are rasterised into a grid.
+func BenchmarkPageClips(b *testing.B) {
+	var sb strings.Builder
+	for i := range 300 {
+		x, y := float64(i%20)*28, float64(i/20)*28
+		if i%2 == 0 {
+			fmt.Fprintf(&sb, "q %.1f %.1f 26 26 re W n 0.2 0.4 0.8 rg 0 0 600 850 re f Q\n", x, y)
+			continue
+		}
+		fmt.Fprintf(&sb, "q %.1f %.1f m %.1f %.1f %.1f %.1f %.1f %.1f c h W* n 0.8 0.3 0.1 rg 0 0 600 850 re f Q\n",
+			x, y, x+10, y+30, x+20, y-4, x+26, y+26)
 	}
 	d := onePage(b, [4]float64{0, 0, 595, 842}, sb.String(), nil)
 	b.ResetTimer()

@@ -88,7 +88,7 @@ func (r *renderer) drawSoftMask(dict reader.Dict, form *reader.Stream, kind read
 		painted = make([]float32, r.img.W*r.img.H)
 	}
 
-	inner := gstate{
+	inner := r.frame(gstate{
 		ctm:         g.ctm,
 		fill:        black,
 		stroke:      black,
@@ -98,7 +98,8 @@ func (r *renderer) drawSoftMask(dict reader.Dict, form *reader.Stream, kind read
 		miterLimit:  10,
 		fillAlpha:   1,
 		strokeAlpha: 1,
-	}
+	})
+	defer r.release()
 	if arr, ok := reader.ToArray(resolve(r.doc, form.Dict.Get("Matrix"))); ok && len(arr) == 6 {
 		n := make([]float64, 6)
 		for i := range n {
@@ -128,10 +129,10 @@ func (r *renderer) drawSoftMask(dict reader.Dict, form *reader.Stream, kind read
 	wasTm, wasTlm := r.tm, r.tlm
 	r.img, r.painted, r.base = paper, painted, inner.ctm
 	if hasBox {
-		r.clipToBox(&inner, box)
+		r.clipToBox(inner, box)
 	}
 	r.depth++
-	r.run(content, formResources, inner)
+	r.run(content, formResources, *inner)
 	r.depth--
 	r.img, r.painted, r.base = wasImg, wasPainted, wasBase
 	r.tm, r.tlm = wasTm, wasTlm

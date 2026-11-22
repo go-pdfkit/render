@@ -288,3 +288,28 @@ func TestARectangleThinnerThanASubScanline(t *testing.T) {
 		}
 	}
 }
+
+// A rectangle clip is carried as four numbers only while the transform keeps it
+// axis-aligned. Under a mirror it still is, with its corners the other way
+// round; under a turn it is not, and must be clipped as the shape it is.
+func TestARectangleClipUnderAMirrorAndATurn(t *testing.T) {
+	mirrored := onePage(t, [4]float64{0, 0, 40, 40},
+		"q -1 0 0 1 40 0 cm 5 10 10 20 re W n 0 g 0 0 40 40 re f Q", nil)
+	img := draw(t, mirrored, Options{})
+	wantBlack(t, img, 30, 20) // user x 5..15 is page x 25..35
+	wantWhite(t, img, 10, 20)
+
+	turned := onePage(t, [4]float64{0, 0, 40, 40},
+		"q 0 1 -1 0 40 0 cm 10 5 20 10 re W n 0 g 0 0 40 40 re f Q", nil)
+	img = draw(t, turned, Options{})
+	wantBlack(t, img, 30, 20) // page x 25..35, y 10..30
+	wantWhite(t, img, 20, 20) // where an unturned rectangle would have been
+
+	// A shear keeps the corners' box but not the shape: a point inside the box
+	// of two opposite corners and outside the parallelogram stays clipped.
+	sheared := onePage(t, [4]float64{0, 0, 40, 40},
+		"q 1 0 1 1 0 0 cm 5 5 10 10 re W n 0 g 0 0 40 40 re f Q", nil)
+	img = draw(t, sheared, Options{})
+	wantBlack(t, img, 24, 26)
+	wantWhite(t, img, 12, 26)
+}

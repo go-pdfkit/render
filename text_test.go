@@ -10,7 +10,7 @@ import (
 
 // pageWithFont builds a page carrying a real embedded TrueType font, so that
 // what comes out can be looked at rather than assumed.
-func pageWithFont(t *testing.T, content string, extra reader.Dict) *reader.Document {
+func pageWithFont(t testing.TB, content string, extra reader.Dict) *reader.Document {
 	t.Helper()
 	ttf := fonts.MostLegible()
 	w := reader.NewWriter("1.7")
