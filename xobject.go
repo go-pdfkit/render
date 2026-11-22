@@ -63,10 +63,9 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 	}
 	// A form's bounding box clips what it draws, which files rely on, and it
 	// is also as far as the form can reach.
-	region := image.Rect(0, 0, r.img.W, r.img.H)
-	if box, ok := rectangle(r.doc, stream.Dict.Get("BBox")); ok {
+	box, hasBox := rectangle(r.doc, stream.Dict.Get("BBox"))
+	if hasBox {
 		r.clipToBox(&inner, box)
-		region = boxBounds(inner.ctm, box, r.img.W, r.img.H)
 	}
 	resources, ok := r.doc.GetDict(stream.Dict, "Resources")
 	if !ok {
@@ -80,7 +79,7 @@ func (r *renderer) drawForm(g *gstate, stream *reader.Stream, parent reader.Dict
 	r.base = inner.ctm
 	r.depth++
 	if r.isGroup(stream) && (g.fillAlpha < 1 || g.softMask != nil) {
-		r.runGroup(g, content, resources, inner, region)
+		r.runGroup(g, content, resources, inner, box, hasBox)
 	} else {
 		r.run(content, resources, inner)
 	}
@@ -108,58 +107,21 @@ func (r *renderer) isGroup(stream *reader.Stream) bool {
 // fifty overlapping shapes each fading on their own, which is what drawing the
 // contents one mark at a time comes to: every overlap doubles up and the thing
 // comes out darker at its seams than anywhere else.
-func (r *renderer) runGroup(g *gstate, content []byte, resources reader.Dict, inner gstate, region image.Rectangle) {
+func (r *renderer) runGroup(g *gstate, content []byte, resources reader.Dict, inner gstate, box [4]float64, hasBox bool) {
 	// Inside a group the alpha starts again at one and the mask is set aside,
 	// since both are about to be applied to the result instead.
 	inner.fillAlpha, inner.strokeAlpha, inner.softMask = 1, 1, nil
-	if region.Empty() {
+	var bbox *[4]float64
+	if hasBox {
+		bbox = &box
+	}
+	dev := r.device()
+	token, ok := dev.beginGroup(g, inner.ctm, bbox)
+	if !ok {
 		return
 	}
-	// Only the part of the page the form's own box can reach is kept and put
-	// back, since that is as far as anything inside it can draw.
-	w, h := region.Dx(), region.Dy()
-	before := make([]uint8, w*h*4)
-	for y := 0; y < h; y++ {
-		from := ((region.Min.Y+y)*r.img.W + region.Min.X) * 4
-		copy(before[y*w*4:(y+1)*w*4], r.img.Pix[from:from+w*4])
-	}
-
-	// How much of the group reached each pixel, kept only when this group is
-	// itself inside a mask that asks that question.
-	var covered []float32
-	wasPainted := r.painted
-	if wasPainted != nil {
-		covered = make([]float32, r.img.W*r.img.H)
-	}
-	r.painted = covered
 	r.run(content, resources, inner)
-	r.painted = wasPainted
-
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			px, py := region.Min.X+x, region.Min.Y+y
-			i := py*r.img.W + px
-			a := g.fillAlpha
-			if g.softMask != nil {
-				a *= maskLevel(g.softMask[i])
-			}
-			if wasPainted != nil {
-				r.markPixel(px, py, float64(covered[i])*a)
-			}
-			if a >= 1 {
-				continue
-			}
-			was := before[(y*w+x)*4:]
-			if a <= 0 {
-				copy(r.img.Pix[i*4:i*4+4], was[:4])
-				continue
-			}
-			for c := 0; c < 3; c++ {
-				k := i*4 + c
-				r.img.Pix[k] = uint8(math.Round(float64(was[c])*(1-a) + float64(r.img.Pix[k])*a))
-			}
-		}
-	}
+	dev.endGroup(g, token)
 }
 
 // boxBounds is the part of the image a rectangle in user space can reach.
@@ -177,25 +139,13 @@ func boxBounds(m geometry.Matrix, box [4]float64, w, h int) image.Rectangle {
 
 // clipToBox narrows the clip to a rectangle in the current user space.
 func (r *renderer) clipToBox(g *gstate, box [4]float64) {
-	path := newRectPath(g.ctm, box)
-	cov, ox, oy, w, h, ok := r.rz.Fill(path, 0, r.img.W, r.img.H)
-	r.narrow(g, cov, ox, oy, w, h, ok)
-}
-
-// newRectPath is the four corners of a rectangle, transformed.
-func newRectPath(m geometry.Matrix, box [4]float64) *vector.Path {
-	p := vector.NewPath()
-	corners := [][2]float64{{box[0], box[1]}, {box[2], box[1]}, {box[2], box[3]}, {box[0], box[3]}}
-	for i, c := range corners {
-		pt := m.TransformPoint(geometry.Point{X: c[0], Y: c[1]})
-		if i == 0 {
-			p.MoveTo(pt.X, pt.Y)
-			continue
-		}
-		p.LineTo(pt.X, pt.Y)
-	}
-	p.Close()
-	return p
+	p := &userPath{}
+	p.moveTo(box[0], box[1])
+	p.lineTo(box[2], box[1])
+	p.lineTo(box[2], box[3])
+	p.lineTo(box[0], box[3])
+	p.closePath()
+	r.device().clipPath(g, p, g.ctm, vector.NonZero, nil)
 }
 
 // drawImageXObject decodes an image and puts it on the page. A stencil mask
@@ -209,7 +159,7 @@ func (r *renderer) drawImageXObject(g *gstate, stream *reader.Stream, resources 
 	if mask, ok := reader.ToBool(resolve(r.doc, stream.Dict.Get("ImageMask"))); ok && mask {
 		paintStencil(s, g.fill)
 	}
-	r.drawImage(g, s)
+	r.device().image(g, s)
 }
 
 // paintStencil fills in the colour a one-bit mask is drawn in.
@@ -232,5 +182,5 @@ func (r *renderer) drawInlineImage(g *gstate, im *reader.InlineImage, resources 
 	if mask, ok := reader.ToBool(resolve(r.doc, dict.Get("ImageMask"))); ok && mask {
 		paintStencil(s, g.fill)
 	}
-	r.drawImage(g, s)
+	r.device().image(g, s)
 }

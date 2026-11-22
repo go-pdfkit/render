@@ -72,6 +72,12 @@ type renderer struct {
 	img *raster.Image
 	rz  vector.Rasterizer
 
+	// dev is where marks go, set on first use: see device().
+	dev device
+	// glyphPath is the outline buffer drawGlyph reuses from one glyph to the
+	// next, and is nil while a glyph is being drawn.
+	glyphPath *userPath
+
 	// depth bounds how far one form may draw another.
 	depth int
 
