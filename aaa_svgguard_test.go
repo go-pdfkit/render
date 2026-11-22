@@ -28,6 +28,32 @@ func guardFixture() (*renderer, *svgDevice, gstate, *userPath) {
 
 func written(d *svgDevice) int { return len(d.body) + len(d.defs) }
 
+// noPanic turns a crash into a failure that says what it was. These tests sit
+// first in the package so that a guard taken away is reported by what it
+// guards, not by whichever later test the crash happened to land in.
+func noPanic(t *testing.T) {
+	t.Helper()
+	if e := recover(); e != nil {
+		t.Errorf("panicked: %v", e)
+	}
+}
+
+// A page that is not there writes nothing and says so; one that is there is
+// written whole.
+func TestPageSVGWritesOnlyAPageThatExists(t *testing.T) {
+	defer noPanic(t)
+	d := onePage(t, [4]float64{0, 0, 30, 20}, "0 g 0 0 5 5 re f", nil)
+	var none strings.Builder
+	if err := PageSVG(d, 9, &none, SVGOptions{}); err == nil || none.Len() != 0 {
+		t.Errorf("a page that is not there: err %v, %d bytes", err, none.Len())
+	}
+	var buf strings.Builder
+	if err := PageSVG(d, 1, &buf, SVGOptions{}); err != nil || !strings.HasPrefix(buf.String(), `<svg `) ||
+		!strings.HasSuffix(buf.String(), `</svg>`) {
+		t.Errorf("a page that is there: err %v, %q", err, buf.String())
+	}
+}
+
 // Each guard that keeps a mark out of the document is held on both sides: the
 // same mark is written when it shows and not when it does not.
 func TestAMarkThatShowsNothingWritesNothing(t *testing.T) {
@@ -121,6 +147,7 @@ func TestADashIsWrittenOnlyWhenSVGAcceptsIt(t *testing.T) {
 // Past its limit the device writes nothing and allocates nothing, whichever
 // method it is asked through.
 func TestAFullDeviceWritesNothingMore(t *testing.T) {
+	defer noPanic(t)
 	r, _, g, p := guardFixture()
 	small := newSVGDevice(r, 1, 1)
 	small.body = []byte("xx")
@@ -164,6 +191,7 @@ func TestTheClipInForceWrapsWhatFollows(t *testing.T) {
 }
 
 func TestGroupsFadedAndMasked(t *testing.T) {
+	defer noPanic(t)
 	r, dev, g, _ := guardFixture()
 
 	// Faded only: a <g>, closed by the matching </g>, and the renderer untouched.
