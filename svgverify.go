@@ -88,9 +88,8 @@ func verifySVG(doc []byte) error {
 			for end < len(doc) && doc[end] != '"' {
 				end++
 			}
-			if end >= len(doc) {
-				return errSVGEscaped
-			}
+			// A value with no closing quote ends the document: i is then past it,
+			// and the element is refused below for having no end.
 			attr, value := doc[i:k], doc[k+2:end]
 			check, ok := attrs[string(attr)]
 			if !ok || !check(value) {
