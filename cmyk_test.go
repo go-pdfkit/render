@@ -7,7 +7,6 @@ import (
 	"image/color"
 	"image/jpeg"
 	"testing"
-	"time"
 
 	"github.com/go-pdfkit/reader"
 )
@@ -255,40 +254,39 @@ func bigCMYKPage(t *testing.T, side int) *reader.Document {
 // CMYK scan, 8 699 840 pixels -- that was 59% of the page, and the picture carries
 // 48 370 distinct quads: 0.56%. Cached, the page went from 893 ms to 210 ms.
 //
-// The bound is a ratio against a witness the cache cannot help: the SAME picture
-// with every pixel a different quad. Both convert the same number of pixels; only
-// one of them can answer from the table. A duration would pin this machine and a
-// call count would need a hook inside a third-party colour package.
+// It COUNTS how many times the conversion is asked, through renderPage and the
+// counter the renderer holds, as TestAThreeComponentJPEGIsCachedOnItsSampleTriple
+// does. It used to compare two wall-clock minima, and on 2026-11-22 the freebsd
+// (vm) lane read 0.52 against a bound of 0.5 on a commit that touched no CMYK code.
 func TestACMYKPictureIsConvertedOncePerDistinctQuad(t *testing.T) {
 	const side = 360 // 129 600 pixels
-	best := func(fill func(x, y int) color.CMYK) time.Duration {
-		defer asCMYKImage(t, side, fill)()
-		d := bigCMYKPage(t, side)
-		draw(t, d, Options{}) // warm
-		out := time.Duration(1 << 62)
-		for i := 0; i < 3; i++ {
-			start := time.Now()
-			draw(t, d, Options{})
-			if took := time.Since(start); took < out {
-				out = took
-			}
-		}
-		return out
-	}
-	// Few quads, which is what a scanned form is.
-	subject := best(func(x, y int) color.CMYK {
+	defer asCMYKImage(t, side, func(x, y int) color.CMYK {
+		// Few quads, which is what a scanned form is: four here.
 		v := uint8((x/40 + y/40) % 4 * 60)
 		return color.CMYK{C: v, M: v, Y: v, K: v}
-	})
-	// Every pixel its own quad, which the cache can do nothing with.
-	witness := best(func(x, y int) color.CMYK {
-		n := y*side + x
-		return color.CMYK{C: uint8(n), M: uint8(n >> 8), Y: uint8(n >> 16), K: uint8(n * 7)}
-	})
-	if subject > witness/2 {
-		t.Errorf("a four-quad picture took %v against an all-distinct one's %v (%.2f); "+
-			"the conversion is being asked per pixel rather than per distinct quad",
-			subject, witness, float64(subject)/float64(witness))
+	})()
+	_, r, err := renderPage(bigCMYKPage(t, side), 1, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pixels = side * side
+	// Four distinct quads, so four asks; uncached it is 129 600 exactly. A bound of
+	// a sixteenth of the pixel count refuses the defect with room to spare and does
+	// not pin the measured number.
+	//
+	// THE asked == 0 ARM, because a cache rebuilt for every picture leaves the
+	// renderer's own counter at zero and would otherwise pass as "fewer asks".
+	const bound = pixels / 16
+	t.Logf("asked %d times for %d pixels", r.triples.asked, pixels)
+	switch {
+	case r.triples.asked == 0:
+		t.Error("the conversion was never asked of the renderer's cache, so this " +
+			"test witnesses nothing: a cache built per picture counts nowhere")
+	case r.triples.asked > bound:
+		t.Errorf("a four-quad CMYK picture asked for the conversion %d times for %d "+
+			"pixels, one ask per %.1f; the conversion is being asked per pixel "+
+			"rather than per distinct quad",
+			r.triples.asked, pixels, float64(pixels)/float64(r.triples.asked))
 	}
 }
 
