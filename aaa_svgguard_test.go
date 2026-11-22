@@ -251,13 +251,13 @@ func TestAMaskedImageIsEmbeddedAsPixels(t *testing.T) {
 	g.ctm = geometry.Matrix{Xx: 20, Yy: 20}
 	dev.image(&g, &sampled{w: 1, h: 1, pix: []uint8{9, 9, 9, 255}})
 	body := string(dev.body)
-	if !strings.HasPrefix(body, `<image x="`) || strings.Contains(body, `<use`) {
+	if !strings.HasPrefix(body, `<use href="#i1" transform="matrix(1 0 0 1 `) || !strings.Contains(string(dev.defs), `<image id="i1"`) {
 		t.Errorf("a masked image was written as %q", body)
 	}
 	g.softMask = nil
 	dev.image(&g, &sampled{w: 1, h: 1, pix: []uint8{9, 9, 9, 255}})
-	if !strings.Contains(string(dev.body), `<use href="#i`) {
-		t.Errorf("an unmasked image was not a use: %q", dev.body)
+	if !strings.Contains(string(dev.body[len(body):]), `<use href="#i2" transform="matrix(20 `) {
+		t.Errorf("an unmasked image was not a use of its own: %q", dev.body[len(body):])
 	}
 }
 
@@ -276,7 +276,7 @@ func TestAMaskedMarkIsEmbeddedAsPixels(t *testing.T) {
 			g.softMask[i] = 255
 		}
 		c.draw(dev, &g, p)
-		if body := string(dev.body); !strings.HasPrefix(body, `<image x="`) || strings.Contains(body, `<path`) {
+		if body := string(dev.body); !strings.HasPrefix(body, `<use href="#i1" transform="matrix(1 0 0 1 `) || strings.Contains(body, `<path`) {
 			t.Errorf("%s under a mask was written as %q", c.name, body)
 		}
 	}

@@ -24,7 +24,8 @@ type SVGOptions struct {
 	// in size).
 	RasterScale float64
 	// MaxDuration is how long the page may be interpreted for, as for
-	// [Options.MaxDuration]. When it runs out [ErrTimedOut] is returned and
+	// [Options.MaxDuration] except that zero means ten seconds, not no limit.
+	// When it runs out [ErrTimedOut] is returned and
 	// nothing is written: unlike a raster, a document cut short is not a
 	// smaller picture but malformed.
 	MaxDuration time.Duration
@@ -33,6 +34,16 @@ type SVGOptions struct {
 // ErrSVGTooLarge says the page would have come out past SVGOptions.MaxBytes.
 // Nothing was written.
 var ErrSVGTooLarge = errors.New("render: the SVG would be larger than its limit")
+
+// ErrSVGTooDeep says the page nests clips deeper than the SVG can hold: a
+// rectangle inside a rectangle is one clip, but sixty-five clips of any other
+// shape, one inside the next, are refused. Nothing was written.
+var ErrSVGTooDeep = errors.New("render: the SVG would nest clips deeper than its limit")
+
+// defaultSVGMaxDuration is how long a page may be interpreted when the caller
+// says nothing: ten seconds. A file can ask for any amount of work. It is a
+// variable only so that a test can make it short.
+var defaultSVGMaxDuration = 10 * time.Second
 
 const (
 	defaultSVGMaxBytes    = 64 << 20
@@ -59,14 +70,21 @@ func PageSVG(d *reader.Document, i int, w io.Writer, opt SVGOptions) error {
 	if limit <= 0 {
 		limit = defaultSVGMaxBytes
 	}
+	duration := opt.MaxDuration
+	if duration <= 0 {
+		duration = defaultSVGMaxDuration
+	}
 	var dev *svgDevice
 	_, _, err := renderPageWith(d, i, Options{Scale: scale, MaxPixels: svgMaxPixels,
-		MaxDuration: opt.MaxDuration}, func(r *renderer) device {
+		MaxDuration: duration}, func(r *renderer) device {
 		dev = newSVGDevice(r, scale, limit)
 		return dev
 	})
 	if dev == nil {
 		return err
+	}
+	if dev.deep {
+		return ErrSVGTooDeep
 	}
 	if dev.full() {
 		return ErrSVGTooLarge
@@ -78,9 +96,18 @@ func PageSVG(d *reader.Document, i int, w io.Writer, opt SVGOptions) error {
 	}
 	// The document is built in memory, bounded by MaxBytes, and written in one
 	// call: no error leaves a partial document in w.
-	_, werr := w.Write(dev.document())
+	doc := dev.document()
+	// And it is read once more, the way a reader would, against the allowlist:
+	// what the device wrote is checked here, not only in the tests.
+	if err := svgVerify(doc); err != nil {
+		return err
+	}
+	_, werr := w.Write(doc)
 	return werr
 }
+
+// svgVerify is a variable so that a test can stand a defect in for the device.
+var svgVerify = verifySVG
 
 // num writes a coordinate: three decimals, no trailing zeros, and never NaN or
 // an infinity, which SVG cannot read.

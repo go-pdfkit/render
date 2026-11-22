@@ -34,19 +34,50 @@ type svgDevice struct {
 
 	body, defs []byte
 	groups     []svgGroup
-	over       bool
+	over, deep bool
 	nextID     int
 	glyphs     map[[32]byte]string
 	images     map[[32]byte]string
 
+	// clips knows what each clip the device wrote is, and clipIDs finds one
+	// already written, so that a page that says the same clip a thousand times
+	// is written it once.
+	clips   map[string]svgClipInfo
+	clipIDs map[string]string
+
 	// white and black are the two papers an embedded picture is drawn on, so
-	// that its transparency can be recovered from the difference.
+	// that its transparency can be recovered from the difference. scratch is
+	// the one buffer the pictures are read back into, and spare the papers a
+	// finished group under a mask leaves for the next.
 	white, black *raster.Image
+	scratch      []byte
+	spare        []svgPaper
+}
+
+// An svgClipInfo is what a clip written to the document is: a rectangle (in
+// pixels) when it is one, so that a rectangle inside a rectangle is written as
+// the intersection and not as a chain, and how deep a chain of clips it ends.
+type svgClipInfo struct {
+	rect           bool
+	x0, y0, x1, y1 float64
+	depth          int
+}
+
+// svgClipDepth is how many clips may be nested in the document, which is as many
+// as a reader can follow: past it a page is refused with [ErrSVGTooDeep]. A reader
+// follows a chain of clip paths by recursion, and one of twenty thousand
+// overflows the stack of one that is in common use.
+const svgClipDepth = 64
+
+type svgPaper struct {
+	paper   *raster.Image
+	painted []float32
 }
 
 func newSVGDevice(r *renderer, scale float64, limit int) *svgDevice {
 	return &svgDevice{r: r, scale: scale, limit: limit,
-		glyphs: map[[32]byte]string{}, images: map[[32]byte]string{}}
+		glyphs: map[[32]byte]string{}, images: map[[32]byte]string{},
+		clips: map[string]svgClipInfo{}, clipIDs: map[string]string{}}
 }
 
 // full says the output has passed its limit, and stops the page being
@@ -359,23 +390,74 @@ func (d *svgDevice) embolden(g *gstate, p *userPath, m geometry.Matrix, width fl
 	d.shut(o)
 }
 
-func (d *svgDevice) clipPath(g *gstate, p *userPath, m geometry.Matrix, fr vector.FillRule, _ [4]float64, _ bool) {
+// clipPath narrows the clip of the rasteriser as the pixel renderer would, which
+// is what bounds every picture the device embeds, and writes the same clip into
+// the document.
+func (d *svgDevice) clipPath(g *gstate, p *userPath, m geometry.Matrix, fr vector.FillRule, rect [4]float64, isRect bool) {
 	if d.full() {
 		return
 	}
+	rasterDevice{d.r}.clipPath(g, p, m, fr, rect, isRect)
+	parent := d.clips[g.svgClip] // the zero clip when there is none
+	if isRect && m.Xy == 0 && m.Yx == 0 && (g.svgClip == "" || parent.rect) {
+		a := m.TransformPoint(geometry.Point{X: rect[0], Y: rect[1]})
+		b := m.TransformPoint(geometry.Point{X: rect[0] + rect[2], Y: rect[1] + rect[3]})
+		x0, x1 := math.Min(a.X, b.X), math.Max(a.X, b.X)
+		y0, y1 := math.Min(a.Y, b.Y), math.Max(a.Y, b.Y)
+		if finite(x0, y0, x1, y1) {
+			if g.svgClip != "" {
+				x0, y0 = math.Max(x0, parent.x0), math.Max(y0, parent.y0)
+				x1, y1 = math.Min(x1, parent.x1), math.Min(y1, parent.y1)
+				x1, y1 = math.Max(x0, x1), math.Max(y0, y1)
+			}
+			data := "M " + num(x0) + " " + num(y0) + "L " + num(x1) + " " + num(y0) + "L " + num(x1) + " " +
+				num(y1) + "L " + num(x0) + " " + num(y1) + "Z"
+			g.svgClip = d.clipDef("", data, false, svgClipInfo{rect: true, x0: x0, y0: y0, x1: x1, y1: y1, depth: 1})
+			return
+		}
+	}
+	depth := parent.depth + 1
+	if depth > svgClipDepth {
+		d.over, d.deep = true, true
+		d.r.deadline = time.Unix(1, 0)
+		return
+	}
+	g.svgClip = d.clipDef(g.svgClip, string(pathData(p, m)), fr == vector.EvenOdd, svgClipInfo{depth: depth})
+}
+
+func finite(v ...float64) bool {
+	for _, x := range v {
+		if math.IsNaN(x) || math.IsInf(x, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+// clipDef writes a clip under another, or finds the one already written.
+func (d *svgDevice) clipDef(under, data string, evenodd bool, info svgClipInfo) string {
+	key := under + "|" + data
+	if evenodd {
+		key += "|e"
+	}
+	if id, ok := d.clipIDs[key]; ok {
+		return id
+	}
 	id := d.id("c")
+	d.clipIDs[key] = id
+	d.clips[id] = info
 	d.defs = append(d.defs, `<clipPath id="`+id+`"`...)
-	if g.svgClip != "" {
-		d.defs = append(d.defs, ` clip-path="url(#`+g.svgClip+`)"`...)
+	if under != "" {
+		d.defs = append(d.defs, ` clip-path="url(#`+under+`)"`...)
 	}
 	d.defs = append(d.defs, `><path d="`...)
-	d.defs = append(d.defs, pathData(p, m)...)
+	d.defs = append(d.defs, data...)
 	d.defs = append(d.defs, `"`...)
-	if fr == vector.EvenOdd {
+	if evenodd {
 		d.defs = append(d.defs, ` clip-rule="evenodd"`...)
 	}
 	d.defs = append(d.defs, `/></clipPath>`...)
-	g.svgClip = id
+	return id
 }
 
 func (d *svgDevice) image(g *gstate, s *sampled) {
@@ -404,6 +486,7 @@ func (d *svgDevice) image(g *gstate, s *sampled) {
 // smaller without losing what was drawn.
 func (d *svgDevice) imageDef(s *sampled) string {
 	h := sha256.New()
+	h.Write([]byte{'s'}) // a picture of the page's own, which is another kind of key
 	var dims [16]byte
 	binary.LittleEndian.PutUint64(dims[:], uint64(s.w))
 	binary.LittleEndian.PutUint64(dims[8:], uint64(s.h))
@@ -491,12 +574,20 @@ func (d *svgDevice) beginGroup(g *gstate, ctm geometry.Matrix, box [4]float64, h
 	if hasBox {
 		region = boxBounds(ctm, box, r.img.W, r.img.H)
 	}
+	// Nothing in the group can reach past the clip it starts under, which is why
+	// only this much of its paper is read and cleaned.
+	region = region.Intersect(d.clipBox(g))
 	if region.Empty() {
 		return false
 	}
-	grp := svgGroup{masked: true, region: region, paper: raster.New(r.img.W, r.img.H),
-		painted: make([]float32, r.img.W*r.img.H), wasImg: r.img, wasPainted: r.painted, wasDev: r.dev}
-	fill(grp.paper, color.RGBA{R: 255, G: 255, B: 255, A: 255})
+	grp := svgGroup{masked: true, region: region, wasImg: r.img, wasPainted: r.painted, wasDev: r.dev}
+	if n := len(d.spare); n > 0 {
+		grp.paper, grp.painted = d.spare[n-1].paper, d.spare[n-1].painted
+		d.spare = d.spare[:n-1]
+	} else {
+		grp.paper, grp.painted = raster.New(r.img.W, r.img.H), make([]float32, r.img.W*r.img.H)
+		fill(grp.paper, color.RGBA{R: 255, G: 255, B: 255, A: 255})
+	}
 	r.img, r.painted, r.dev = grp.paper, grp.painted, rasterDevice{r}
 	d.groups = append(d.groups, grp)
 	return true
@@ -511,7 +602,7 @@ func (d *svgDevice) endGroup(g *gstate) {
 	}
 	r := d.r
 	r.img, r.painted, r.dev = grp.wasImg, grp.wasPainted, grp.wasDev
-	out := image.NewNRGBA(image.Rect(0, 0, r.img.W, r.img.H))
+	out := d.canvas(grp.region)
 	for y := grp.region.Min.Y; y < grp.region.Max.Y; y++ {
 		for x := grp.region.Min.X; x < grp.region.Max.X; x++ {
 			i := y*r.img.W + x
@@ -528,14 +619,26 @@ func (d *svgDevice) endGroup(g *gstate) {
 				B: un(grp.paper.Pix[i*4+2]), A: uint8(math.Round(255 * math.Min(a, 1)))})
 		}
 	}
-	d.emit(g, out, grp.region)
+	d.emit(out, grp.region)
+	// The paper goes back to white and the grid to nothing where the group
+	// was, to serve the next.
+	for y := grp.region.Min.Y; y < grp.region.Max.Y; y++ {
+		for x := grp.region.Min.X; x < grp.region.Max.X; x++ {
+			i := y*r.img.W + x
+			grp.painted[i] = 0
+			grp.paper.Pix[i*4], grp.paper.Pix[i*4+1], grp.paper.Pix[i*4+2], grp.paper.Pix[i*4+3] = 255, 255, 255, 255
+		}
+	}
+	d.spare = append(d.spare, svgPaper{grp.paper, grp.painted})
 }
 
 // fallback draws one mark with the rasteriser, twice, on a white paper and on a
 // black one, and embeds the result as an image: what a pixel was over white and
 // over black says both its colour and how much of it there is.
 func (d *svgDevice) fallback(g *gstate, region image.Rectangle, op func(rd rasterDevice, gg *gstate)) {
-	region = region.Intersect(d.page())
+	// Nothing is drawn past the clip, so nothing past it is read back: a shading
+	// under a one-point clip is a one-point picture, not a page of them.
+	region = region.Intersect(d.clipBox(g))
 	if region.Empty() {
 		return
 	}
@@ -553,7 +656,7 @@ func (d *svgDevice) fallback(g *gstate, region image.Rectangle, op func(rd raste
 		r.img = paper
 		op(rasterDevice{r}, &gg)
 	}
-	out := image.NewNRGBA(image.Rect(0, 0, r.img.W, r.img.H))
+	out := d.canvas(region)
 	for y := region.Min.Y; y < region.Max.Y; y++ {
 		for x := region.Min.X; x < region.Max.X; x++ {
 			i := (y*r.img.W + x) * 4
@@ -569,7 +672,28 @@ func (d *svgDevice) fallback(g *gstate, region image.Rectangle, op func(rd raste
 		}
 	}
 	d.restore(region)
-	d.emit(g, out, region)
+	d.emit(out, region)
+}
+
+// clipBox is the part of the page the clip in force lets anything through.
+func (d *svgDevice) clipBox(g *gstate) image.Rectangle {
+	if g.clip == nil {
+		return d.page()
+	}
+	return image.Rect(g.clip.ox, g.clip.oy, g.clip.ox+g.clip.w, g.clip.oy+g.clip.h).Intersect(d.page())
+}
+
+// canvas is a cleared picture over a region of the page, in a buffer kept from
+// one picture to the next: a page of a thousand small pictures allocates the
+// largest of them once, and not a page each.
+func (d *svgDevice) canvas(region image.Rectangle) *image.NRGBA {
+	n := region.Dx() * region.Dy() * 4
+	if cap(d.scratch) < n {
+		d.scratch = make([]byte, n)
+	}
+	pix := d.scratch[:n]
+	clear(pix)
+	return &image.NRGBA{Pix: pix, Stride: region.Dx() * 4, Rect: region}
 }
 
 // restore puts the two papers back to white and black where a mark was drawn.
@@ -585,7 +709,11 @@ func (d *svgDevice) restore(region image.Rectangle) {
 
 // emit writes the part of a picture that is not see-through as an <image>, at
 // the pixels it came from.
-func (d *svgDevice) emit(g *gstate, img *image.NRGBA, region image.Rectangle) {
+//
+// The picture was drawn through the clip in force, so it is not clipped again.
+// One that is the same as an earlier one, pixel for pixel, is defined once and
+// used again where it falls.
+func (d *svgDevice) emit(img *image.NRGBA, region image.Rectangle) {
 	box := image.Rectangle{}
 	for y := region.Min.Y; y < region.Max.Y; y++ {
 		for x := region.Min.X; x < region.Max.X; x++ {
@@ -597,9 +725,29 @@ func (d *svgDevice) emit(g *gstate, img *image.NRGBA, region image.Rectangle) {
 	if box.Empty() {
 		return
 	}
-	o := d.open(g)
-	d.put(`<image x="`, strconv.Itoa(box.Min.X), `" y="`, strconv.Itoa(box.Min.Y), `" width="`,
-		strconv.Itoa(box.Dx()), `" height="`, strconv.Itoa(box.Dy()), `" href="`,
-		dataURI(img.SubImage(box).(*image.NRGBA), false), `"/>`)
-	d.shut(o)
+	sub := img.SubImage(box).(*image.NRGBA)
+	h := sha256.New()
+	h.Write([]byte{'e'})
+	var dims [16]byte
+	binary.LittleEndian.PutUint64(dims[:], uint64(box.Dx()))
+	binary.LittleEndian.PutUint64(dims[8:], uint64(box.Dy()))
+	h.Write(dims[:])
+	for y := 0; y < box.Dy(); y++ {
+		h.Write(sub.Pix[y*sub.Stride : y*sub.Stride+box.Dx()*4])
+	}
+	var key [32]byte
+	h.Sum(key[:0])
+	id, ok := d.images[key]
+	if !ok {
+		id = d.id("i")
+		d.images[key] = id
+		d.defs = append(d.defs, `<image id="`+id+`" width="`...)
+		d.defs = strconv.AppendInt(d.defs, int64(box.Dx()), 10)
+		d.defs = append(d.defs, `" height="`...)
+		d.defs = strconv.AppendInt(d.defs, int64(box.Dy()), 10)
+		d.defs = append(d.defs, `" href="`...)
+		d.defs = append(d.defs, dataURI(sub, false)...)
+		d.defs = append(d.defs, `"/>`...)
+	}
+	d.put(`<use href="#`, id, `" transform="matrix(1 0 0 1 `, strconv.Itoa(box.Min.X), ` `, strconv.Itoa(box.Min.Y), `)"/>`)
 }

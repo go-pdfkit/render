@@ -45,7 +45,7 @@ var svgAllowed = map[string]map[string]*regexp.Regexp{
 		"fill": re(colorRE), "fill-opacity": re(numRE), "fill-rule": re(`evenodd`), "opacity": re(numRE),
 	},
 	"image": {
-		"id": re(idRE), "x": re(`[0-9]+`), "y": re(`[0-9]+`), "width": re(`[0-9]+`), "height": re(`[0-9]+`),
+		"id": re(idRE), "width": re(`[0-9]+`), "height": re(`[0-9]+`),
 		"href": re(`data:image/(png|jpeg);base64,[A-Za-z0-9+/=]*`),
 	},
 }
@@ -119,6 +119,10 @@ func checkSVGDocument(t testing.TB, doc []byte) {
 		if !defined[u] {
 			t.Fatalf("reference to #%s, which the document does not define", u)
 		}
+	}
+	// The check that runs in production agrees with this independent one.
+	if err := verifySVG(doc); err != nil {
+		t.Fatalf("the production check refuses a document the test check accepts: %v", err)
 	}
 	// Never NaN or an infinity, anywhere but inside base64 data.
 	text := regexp.MustCompile(`base64,[A-Za-z0-9+/=]*`).ReplaceAllString(string(doc), "")

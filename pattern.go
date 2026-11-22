@@ -135,12 +135,20 @@ func (r *renderer) paintShading(g *gstate, sh *shading, m geometry.Matrix, cov [
 
 // wholeClip is a coverage grid of one everywhere the clip allows, which is
 // what the sh operator paints over.
+//
+// The grid is the box of the clip and not the page: nothing is painted past the
+// box, so a shading under a one-point clip costs a one-point grid, whatever the
+// size of the page.
 func (r *renderer) wholeClip(g *gstate) ([]float64, int, int, int, int) {
-	cov := make([]float64, r.img.W*r.img.H)
+	ox, oy, w, h := 0, 0, r.img.W, r.img.H
+	if g.clip != nil {
+		ox, oy, w, h = g.clip.ox, g.clip.oy, g.clip.w, g.clip.h
+	}
+	cov := make([]float64, w*h)
 	for i := range cov {
 		cov[i] = 1
 	}
-	return cov, 0, 0, r.img.W, r.img.H
+	return cov, ox, oy, w, h
 }
 
 // drawShading is the sh operator: paint a shading over everything the clip

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -29,6 +30,7 @@ func embeddedOverWhite(t *testing.T, doc []byte, w, h int) *raster.Image {
 	fill(out, color.RGBA{R: 255, G: 255, B: 255, A: 255})
 	dec := xml.NewDecoder(bytes.NewReader(doc))
 	inDefs := false
+	pictures := map[string]string{}
 	for {
 		tok, err := dec.Token()
 		if err != nil {
@@ -39,21 +41,29 @@ func embeddedOverWhite(t *testing.T, doc []byte, w, h int) *raster.Image {
 			if tk.Name.Local == "defs" {
 				inDefs = true
 			}
-			if tk.Name.Local != "image" || inDefs {
+			var id, href, transform string
+			for _, a := range tk.Attr {
+				switch a.Name.Local {
+				case "id":
+					id = a.Value
+				case "href":
+					href = a.Value
+				case "transform":
+					transform = a.Value
+				}
+			}
+			if tk.Name.Local == "image" && inDefs {
+				pictures[id] = href
+			}
+			// A picture is defined once in <defs> and used where it falls.
+			if tk.Name.Local != "use" || inDefs || pictures[href[1:]] == "" {
 				continue
 			}
 			var x, y int
-			var href string
-			for _, a := range tk.Attr {
-				switch a.Name.Local {
-				case "x":
-					x = atoi(t, a.Value)
-				case "y":
-					y = atoi(t, a.Value)
-				case "href":
-					href = a.Value
-				}
+			if _, err := fmt.Sscanf(transform, "matrix(1 0 0 1 %d %d)", &x, &y); err != nil {
+				continue
 			}
+			href = pictures[href[1:]]
 			raw, err := base64.StdEncoding.DecodeString(href[strings.Index(href, ",")+1:])
 			if err != nil {
 				t.Fatal(err)

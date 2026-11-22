@@ -92,7 +92,7 @@ origin would miss the shape it was asked to fill by the width of a page.
 err := render.PageSVG(doc, 1, w, render.SVGOptions{
 	MaxBytes:    8 << 20,          // refuse (ErrSVGTooLarge), writing nothing; default 64 MiB
 	RasterScale: 2,                // pixels per point of the embedded pictures; default 2
-	MaxDuration: 5 * time.Second,  // as Options.MaxDuration; ErrTimedOut
+	MaxDuration: 5 * time.Second,  // as Options.MaxDuration; ErrTimedOut; default 10 s
 })
 ```
 
@@ -107,9 +107,19 @@ embedded as an `<image>` where it falls. The document holds only numbers,
 generated ids and base64 data: nothing the PDF says is copied as text,
 `href` is `#id` or a `data:image/png|jpeg;base64,` URI, and there is no
 `<script>`, `<foreignObject>`, `<style>` or `on*` attribute. NaN and
-infinities are never printed. Every document the test suite draws is also
-written as SVG and held to that allowlist, and `FuzzPageSVG` does the same
-for any content stream.
+infinities are never printed. The allowlist is checked in production, not
+only in the tests: `PageSVG` reads the finished buffer once more, element by
+element and attribute by attribute, and refuses it (writing nothing) if
+anything is off it; that costs one allocation per id and none per byte.
+Every document the test suite draws is also held to it, and `FuzzPageSVG`
+does the same for any content stream.
+
+A small file cannot ask for much. A picture is only as large as the clip it is
+drawn under, never the page; equal pictures are embedded once and used where
+they fall; a rectangle clip inside a rectangle clip is their intersection,
+one clip, and clips of any other shape may nest 64 deep (more is
+`ErrSVGTooDeep`); `MaxDuration` is ten seconds when left at zero. The test
+`TestASmallFileCannotAskForMuchMemoryOrOutput` states the measured bounds.
 
 Limits, stated rather than hidden:
 

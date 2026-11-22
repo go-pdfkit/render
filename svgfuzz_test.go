@@ -33,7 +33,7 @@ func FuzzPageSVG(f *testing.F) {
 		var out bytes.Buffer
 		err := PageSVG(d, 1, &out, SVGOptions{MaxBytes: 1 << 20, RasterScale: 1, MaxDuration: 2 * time.Second})
 		if err != nil {
-			if !errors.Is(err, ErrSVGTooLarge) && !errors.Is(err, ErrTimedOut) {
+			if !errors.Is(err, ErrSVGTooLarge) && !errors.Is(err, ErrSVGTooDeep) && !errors.Is(err, ErrTimedOut) {
 				t.Fatal(err)
 			}
 			if out.Len() != 0 {
