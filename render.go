@@ -183,7 +183,7 @@ func renderPageWith(d *reader.Document, i int, opt Options, mk func(*renderer) d
 		r.oc = readOptional(d)
 	}
 	if opt.MaxDuration > 0 {
-		r.deadline = time.Now().Add(opt.MaxDuration)
+		r.deadline = clock().Add(opt.MaxDuration)
 	}
 	start := r.initialState(box, rotation, s)
 	r.base = start.ctm
@@ -191,7 +191,7 @@ func renderPageWith(d *reader.Document, i int, opt Options, mk func(*renderer) d
 	if !opt.NoAnnotations {
 		r.drawAnnotations(page, start)
 	}
-	if r.ranOut {
+	if r.late() {
 		return img, r, ErrTimedOut
 	}
 	return img, r, nil

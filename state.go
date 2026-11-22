@@ -272,7 +272,21 @@ func (r *renderer) overrun() bool {
 		return false
 	}
 	r.checked = 0
-	if time.Now().After(r.deadline) {
+	return r.late()
+}
+
+// clock is the time source of the deadline; a test replaces it so that a
+// budget is tested without waiting on, or depending on, the machine's clock.
+var clock = time.Now
+
+// late looks at the clock now and records that the page ran out when it did.
+// It is also asked once when a page ends, since a page of fewer operations
+// than timeCheckEvery would otherwise never be measured against its budget.
+func (r *renderer) late() bool {
+	if r.deadline.IsZero() {
+		return false
+	}
+	if r.ranOut || clock().After(r.deadline) {
 		r.ranOut = true
 		return true
 	}

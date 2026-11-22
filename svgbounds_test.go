@@ -169,7 +169,7 @@ func TestANestOfRectanglesIsOneClip(t *testing.T) {
 	}
 	nestedClip := regexp.MustCompile(`<clipPath id="c\d+" clip-path=`)
 	for name, c := range cases {
-		doc := string(svgOf(t, onePage(t, [4]float64{0, 0, 100, 100}, c.content, nil), SVGOptions{}))
+		doc := string(svgOf(t, onePage(t, [4]float64{0, 0, 100, 100}, c.content, nil), SVGOptions{MaxDuration: time.Hour}))
 		if n := strings.Count(doc, "<clipPath"); n != c.clips {
 			t.Errorf("%s: want %d clips, got %d", name, c.clips, n)
 		}
@@ -326,13 +326,33 @@ func TestTheDefaultDurationIsFinite(t *testing.T) {
 	}
 	defer func(v time.Duration) { defaultSVGMaxDuration = v }(defaultSVGMaxDuration)
 	defaultSVGMaxDuration = time.Nanosecond
-	d := onePage(t, [4]float64{0, 0, 100, 100}, strings.Repeat("0 0 10 10 re f ", 200), nil)
+	// A page of fewer operations than timeCheckEvery is measured when it ends,
+	// against a clock that moves a millisecond every time it is read, so the
+	// verdict does not depend on the machine's clock resolution or speed.
+	defer func(f func() time.Time) { clock = f }(clock)
+	at := time.Unix(1000, 0)
+	clock = func() time.Time { at = at.Add(time.Millisecond); return at }
+	d := onePage(t, [4]float64{0, 0, 100, 100}, strings.Repeat("0 0 10 10 re f ", 20), nil)
 	var out bytes.Buffer
 	if err := PageSVG(d, 1, &out, SVGOptions{}); !errors.Is(err, ErrTimedOut) {
 		t.Fatalf("want ErrTimedOut under a nanosecond default, got %v", err)
 	}
 	if out.Len() != 0 {
 		t.Errorf("a page that ran out of time wrote %d bytes", out.Len())
+	}
+}
+
+func TestAShortPageWithinItsTimeIsNotTimedOut(t *testing.T) {
+	defer func(f func() time.Time) { clock = f }(clock)
+	at := time.Unix(1000, 0)
+	clock = func() time.Time { at = at.Add(time.Millisecond); return at }
+	d := onePage(t, [4]float64{0, 0, 100, 100}, strings.Repeat("0 0 10 10 re f ", 20), nil)
+	var out bytes.Buffer
+	if err := PageSVG(d, 1, &out, SVGOptions{MaxDuration: time.Hour}); err != nil {
+		t.Fatalf("a page inside its hour failed with %v", err)
+	}
+	if out.Len() == 0 {
+		t.Error("a page inside its time wrote nothing")
 	}
 }
 
@@ -422,7 +442,9 @@ func TestASmallFileCannotAskForMuchMemoryOrOutput(t *testing.T) {
 			var before, after runtime.MemStats
 			runtime.GC()
 			runtime.ReadMemStats(&before)
-			err := PageSVG(d, 1, &out, SVGOptions{})
+			// These bound memory and output, not time: a slow emulated runner
+			// must not turn them into a timing test.
+			err := PageSVG(d, 1, &out, SVGOptions{MaxDuration: time.Hour})
 			runtime.ReadMemStats(&after)
 			if err != nil {
 				t.Fatal(err)
