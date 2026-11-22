@@ -56,6 +56,10 @@ type gstate struct {
 	// picture and holding it wider than it was measured would only cost
 	// memory — and a page may name a great many masks.
 	softMask []uint8
+
+	// svgClip is the id of the clip an SVG device has written for this state,
+	// which nests the ones before it. Only that device reads or writes it.
+	svgClip string
 }
 
 // clone copies a state deeply enough that saving and restoring works: the clip

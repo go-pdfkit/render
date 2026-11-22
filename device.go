@@ -84,6 +84,10 @@ type userSeg struct {
 // filled and clipped is mapped once.
 type userPath struct {
 	segs []userSeg
+	// glyph says the path is a glyph's outline, in the font's own units: the
+	// same outline comes round again for every use of the letter, which a device
+	// that writes shapes can keep once.
+	glyph bool
 
 	// mapped is segs through mappedBy, and holds only while valid: any change
 	// to segs clears it. It is a value, not a pointer, so that mapping a path

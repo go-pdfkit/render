@@ -10,6 +10,8 @@ require (
 	github.com/go-opentype/opentype v0.22.0
 	github.com/go-pdfkit/pdffont v0.4.0
 	github.com/go-pdfkit/reader v0.19.1
+	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
+	github.com/srwiley/rasterx v0.0.0-20210519020934-456a8d69b780
 )
 
 require (
@@ -17,5 +19,7 @@ require (
 	github.com/go-simd/highway v0.0.14 // indirect
 	github.com/tannevaled/gobig2 v0.2.0 // indirect
 	golang.org/x/image v0.47.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 )

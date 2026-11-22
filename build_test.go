@@ -50,6 +50,9 @@ func draw(t *testing.T, d *reader.Document, opt Options) *raster.Image {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every document this suite draws is also written as SVG and held to the
+	// allowlist: the synthetic corpus the gate runs over.
+	tapSVG(t, d)
 	return img
 }
 

@@ -119,6 +119,12 @@ func Page(d *reader.Document, i int, opt Options) (*raster.Image, error) {
 // the alternative -- a package-level variable the renderer writes into -- is
 // shared state between tests that happen to run in one process.
 func renderPage(d *reader.Document, i int, opt Options) (*raster.Image, *renderer, error) {
+	return renderPageWith(d, i, opt, nil)
+}
+
+// renderPageWith is renderPage with the device the marks go to chosen by mk,
+// which is given the renderer once it exists. Nil means the rasteriser.
+func renderPageWith(d *reader.Document, i int, opt Options, mk func(*renderer) device) (*raster.Image, *renderer, error) {
 	page, err := d.Page(i)
 	if err != nil {
 		return nil, nil, err
@@ -170,6 +176,9 @@ func renderPage(d *reader.Document, i int, opt Options) (*raster.Image, *rendere
 	resources, _ := d.GetDict(page, "Resources")
 	r := &renderer{doc: d, img: img, fonts: map[int]*pdfFont{},
 		softMasks: map[softMaskKey][]uint8{}, iccSpaces: map[int]*space{}}
+	if mk != nil {
+		r.dev = mk(r)
+	}
 	if !opt.AllLayers {
 		r.oc = readOptional(d)
 	}
