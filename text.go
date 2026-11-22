@@ -197,7 +197,7 @@ func (r *renderer) drawGlyph(g *gstate, f *pdfFont, code int, resources reader.D
 	path := r.glyphPath
 	r.glyphPath = nil
 	if path == nil {
-		path = &userPath{}
+		path = &userPath{glyph: true}
 	}
 	path.reset()
 	for _, seg := range segs {

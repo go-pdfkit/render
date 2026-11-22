@@ -86,6 +86,57 @@ its matrix and the transform that drew it both count. Nearly every figure
 a plotting tool writes is a form, so a pattern that stayed at the page's
 origin would miss the shape it was asked to fill by the width of a page.
 
+## A page as SVG
+
+```go
+err := render.PageSVG(doc, 1, w, render.SVGOptions{
+	MaxBytes:    8 << 20,          // refuse (ErrSVGTooLarge), writing nothing; default 64 MiB
+	RasterScale: 2,                // pixels per point of the embedded pictures; default 2
+	MaxDuration: 5 * time.Second,  // as Options.MaxDuration; ErrTimedOut; default 10 s
+})
+```
+
+On any error other than a failing writer nothing is written: the document is
+built in memory, bounded by `MaxBytes`, and handed to `w` in one call, so
+half a document never passes for a whole one.
+
+Paths, clips, images, transparency groups and text (as outlines, so no font
+is needed) become SVG elements. What SVG 1.1 cannot say, which is tiling and
+shading patterns, shadings and soft masks, is drawn by the pixel renderer and
+embedded as an `<image>` where it falls. The document holds only numbers,
+generated ids and base64 data: nothing the PDF says is copied as text,
+`href` is `#id` or a `data:image/png|jpeg;base64,` URI, and there is no
+`<script>`, `<foreignObject>`, `<style>` or `on*` attribute. NaN and
+infinities are never printed. The allowlist is checked in production, not
+only in the tests: `PageSVG` reads the finished buffer once more, element by
+element and attribute by attribute, and refuses it (writing nothing) if
+anything is off it; that costs one allocation per id and none per byte.
+Every document the test suite draws is also held to it, and `FuzzPageSVG`
+does the same for any content stream.
+
+A small file cannot ask for much. A picture is only as large as the clip it is
+drawn under, never the page; equal pictures are embedded once and used where
+they fall; a rectangle clip inside a rectangle clip is their intersection,
+one clip, and clips of any other shape may nest 64 deep (more is
+`ErrSVGTooDeep`); `MaxDuration` is ten seconds when left at zero. The test
+`TestASmallFileCannotAskForMuchMemoryOrOutput` states the measured bounds.
+
+Limits, stated rather than hidden:
+
+- Text render modes 4 to 7 (clip) are not honoured, as in the pixel
+  renderer ([#137](https://github.com/go-pdfkit/render/issues/137)); blend
+  modes are not either ([#138](https://github.com/go-pdfkit/render/issues/138)).
+- Knockout groups are not read.
+- Images are smoothed by an SVG viewer where the raster path is
+  nearest-neighbour; opaque JPEG-like images are re-encoded at quality 90.
+- A transparency group under a soft mask is embedded as a picture whose alpha
+  is recovered from the painted-coverage grid, an approximation: the worst
+  channel difference from the pixel renderer is 1 level in the test pages.
+- The independent check, oksvg, draws only shapes and text (no `<image>`, no
+  clip paths, and it never reads `fill-rule`): on the five vector pages it can
+  draw, the worst mean difference from the pixel renderer is 0.23 levels per
+  channel, with 0.17 % of pixels far.
+
 ## Thumbnails, and a strip of them
 
 A page strip wants a hundred small pictures of somebody else's file, quickly

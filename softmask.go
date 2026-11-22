@@ -128,12 +128,17 @@ func (r *renderer) drawSoftMask(dict reader.Dict, form *reader.Stream, kind read
 	wasImg, wasPainted, wasBase := r.img, r.painted, r.base
 	wasTm, wasTlm := r.tm, r.tlm
 	r.img, r.painted, r.base = paper, painted, inner.ctm
+	// A mask is drawn to be read, never shown, so it is always drawn by the
+	// rasteriser, whatever device the page itself goes to.
+	wasDev := r.dev
+	r.dev = rasterDevice{r}
 	if hasBox {
 		r.clipToBox(inner, box)
 	}
 	r.depth++
 	r.run(content, formResources, *inner)
 	r.depth--
+	r.dev = wasDev
 	r.img, r.painted, r.base = wasImg, wasPainted, wasBase
 	r.tm, r.tlm = wasTm, wasTlm
 
