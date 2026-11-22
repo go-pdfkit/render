@@ -92,9 +92,13 @@ origin would miss the shape it was asked to fill by the width of a page.
 err := render.PageSVG(doc, 1, w, render.SVGOptions{
 	MaxBytes:    8 << 20,          // refuse (ErrSVGTooLarge), writing nothing; default 64 MiB
 	RasterScale: 2,                // pixels per point of the embedded pictures; default 2
-	MaxDuration: 5 * time.Second,  // as Options.MaxDuration; ErrTimedOut writes the page so far
+	MaxDuration: 5 * time.Second,  // as Options.MaxDuration; ErrTimedOut
 })
 ```
+
+On any error other than a failing writer nothing is written: the document is
+built in memory, bounded by `MaxBytes`, and handed to `w` in one call, so
+half a document never passes for a whole one.
 
 Paths, clips, images, transparency groups and text (as outlines, so no font
 is needed) become SVG elements. What SVG 1.1 cannot say, which is tiling and

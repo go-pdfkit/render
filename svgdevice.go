@@ -33,6 +33,7 @@ type svgDevice struct {
 	limit int
 
 	body, defs []byte
+	groups     []svgGroup
 	over       bool
 	nextID     int
 	glyphs     map[[32]byte]string
@@ -358,7 +359,7 @@ func (d *svgDevice) embolden(g *gstate, p *userPath, m geometry.Matrix, width fl
 	d.shut(o)
 }
 
-func (d *svgDevice) clipPath(g *gstate, p *userPath, m geometry.Matrix, fr vector.FillRule, rect *[4]float64) {
+func (d *svgDevice) clipPath(g *gstate, p *userPath, m geometry.Matrix, fr vector.FillRule, _ [4]float64, _ bool) {
 	if d.full() {
 		return
 	}
@@ -474,31 +475,36 @@ type svgGroup struct {
 	wasDev     device
 }
 
-func (d *svgDevice) beginGroup(g *gstate, ctm geometry.Matrix, box *[4]float64) (any, bool) {
+// beginGroup keeps what it needs of the group in a stack of its own, never the
+// graphics state it was given: that is a frame lent for one run.
+func (d *svgDevice) beginGroup(g *gstate, ctm geometry.Matrix, box [4]float64, hasBox bool) bool {
 	if d.full() {
-		return nil, false
+		return false
 	}
 	r := d.r
 	if g.softMask == nil {
 		d.put(`<g`, opacity("opacity", g.fillAlpha), `>`)
-		return &svgGroup{}, true
+		d.groups = append(d.groups, svgGroup{})
+		return true
 	}
 	region := d.page()
-	if box != nil {
-		region = boxBounds(ctm, *box, r.img.W, r.img.H)
+	if hasBox {
+		region = boxBounds(ctm, box, r.img.W, r.img.H)
 	}
 	if region.Empty() {
-		return nil, false
+		return false
 	}
-	grp := &svgGroup{masked: true, region: region, paper: raster.New(r.img.W, r.img.H),
+	grp := svgGroup{masked: true, region: region, paper: raster.New(r.img.W, r.img.H),
 		painted: make([]float32, r.img.W*r.img.H), wasImg: r.img, wasPainted: r.painted, wasDev: r.dev}
 	fill(grp.paper, color.RGBA{R: 255, G: 255, B: 255, A: 255})
 	r.img, r.painted, r.dev = grp.paper, grp.painted, rasterDevice{r}
-	return grp, true
+	d.groups = append(d.groups, grp)
+	return true
 }
 
-func (d *svgDevice) endGroup(g *gstate, token any) {
-	grp := token.(*svgGroup)
+func (d *svgDevice) endGroup(g *gstate) {
+	grp := d.groups[len(d.groups)-1]
+	d.groups = d.groups[:len(d.groups)-1]
 	if !grp.masked {
 		d.put(`</g>`)
 		return

@@ -157,10 +157,10 @@ func TestAFullDeviceWritesNothingMore(t *testing.T) {
 	small.fillPath(&g, p, g.ctm, vector.NonZero, nil)
 	small.strokePath(&g, p, g.ctm, nil)
 	small.embolden(&g, p, g.ctm, 1, nil)
-	small.clipPath(&g, p, g.ctm, vector.NonZero, nil)
+	small.clipPath(&g, p, g.ctm, vector.NonZero, [4]float64{}, false)
 	small.image(&g, &sampled{w: 1, h: 1, pix: []uint8{0, 0, 0, 255}})
 	small.shade(&g, &shading{})
-	if tok, ok := small.beginGroup(&g, geometry.Identity(), nil); ok || tok != nil {
+	if ok := small.beginGroup(&g, geometry.Identity(), [4]float64{}, false); ok || len(small.groups) != 0 {
 		t.Error("a full device opened a group")
 	}
 	if string(small.body) != "xx" || len(small.defs) != 0 || small.nextID != 0 || len(small.images) != 0 {
@@ -176,7 +176,7 @@ func TestTheClipInForceWrapsWhatFollows(t *testing.T) {
 	if dev.open(&g) {
 		t.Error("a group was opened with no clip")
 	}
-	dev.clipPath(&g, p, g.ctm, vector.EvenOdd, nil)
+	dev.clipPath(&g, p, g.ctm, vector.EvenOdd, [4]float64{}, false)
 	if g.svgClip == "" || !strings.Contains(string(dev.defs), ` clip-rule="evenodd"`) {
 		t.Errorf("clip %q, defs %q", g.svgClip, dev.defs)
 	}
@@ -196,18 +196,27 @@ func TestGroupsFadedAndMasked(t *testing.T) {
 
 	// Faded only: a <g>, closed by the matching </g>, and the renderer untouched.
 	g.fillAlpha = 0.5
-	tok, ok := dev.beginGroup(&g, geometry.Identity(), nil)
-	grp, isGroup := tok.(*svgGroup)
-	if !ok || !isGroup || grp.masked || string(dev.body) != `<g opacity="0.5">` {
-		t.Fatalf("faded group: ok %v, token %#v, body %q", ok, tok, dev.body)
+	ok := dev.beginGroup(&g, geometry.Identity(), [4]float64{}, false)
+	if !ok || len(dev.groups) != 1 || dev.groups[0].masked || string(dev.body) != `<g opacity="0.5">` {
+		t.Fatalf("faded group: ok %v, %d open, body %q", ok, len(dev.groups), dev.body)
 	}
 	if _, raster := r.dev.(rasterDevice); raster {
 		t.Error("a faded group moved drawing to the rasteriser")
 	}
-	dev.endGroup(&g, tok)
-	if string(dev.body) != `<g opacity="0.5"></g>` {
-		t.Errorf("faded group closed as %q", dev.body)
+	// Groups nest: the inner closes first, and the stack is empty at the end.
+	g.fillAlpha = 1
+	if !dev.beginGroup(&g, geometry.Identity(), [4]float64{}, false) || len(dev.groups) != 2 {
+		t.Fatalf("a nested group was not opened: %d open", len(dev.groups))
 	}
+	dev.endGroup(&g)
+	if len(dev.groups) != 1 || string(dev.body) != `<g opacity="0.5"><g></g>` {
+		t.Errorf("inner group closed as %q with %d open", dev.body, len(dev.groups))
+	}
+	dev.endGroup(&g)
+	if len(dev.groups) != 0 || string(dev.body) != `<g opacity="0.5"><g></g></g>` {
+		t.Errorf("faded group closed as %q with %d open", dev.body, len(dev.groups))
+	}
+	g.fillAlpha = 0.5
 
 	// Under a mask: drawn by the rasteriser on a paper of its own, and put back.
 	g.fillAlpha = 1
@@ -216,17 +225,16 @@ func TestGroupsFadedAndMasked(t *testing.T) {
 		g.softMask[i] = 255
 	}
 	was := r.img
-	tok, ok = dev.beginGroup(&g, geometry.Identity(), nil)
-	grp, isGroup = tok.(*svgGroup)
-	if !ok || !isGroup || !grp.masked || r.img == was {
-		t.Fatalf("masked group: ok %v, token %#v", ok, tok)
+	ok = dev.beginGroup(&g, geometry.Identity(), [4]float64{}, false)
+	if !ok || len(dev.groups) != 1 || !dev.groups[0].masked || r.img == was {
+		t.Fatalf("masked group: ok %v, %d open", ok, len(dev.groups))
 	}
 	if _, raster := r.dev.(rasterDevice); !raster {
 		t.Error("a masked group was not drawn by the rasteriser")
 	}
 	before := len(dev.body)
-	dev.endGroup(&g, tok)
-	if r.img != was || r.dev != device(dev) {
+	dev.endGroup(&g)
+	if r.img != was || r.dev != device(dev) || len(dev.groups) != 0 {
 		t.Error("the page and its device were not put back")
 	}
 	if len(dev.body) != before {

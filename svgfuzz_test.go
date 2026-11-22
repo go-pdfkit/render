@@ -11,7 +11,7 @@ import (
 // allowlist: whatever the stream says, the document is well formed, holds
 // only the elements and attributes the checker names, resolves every
 // reference, and never prints NaN or an infinity. A page that runs out of
-// time or room is a refusal, not a failure.
+// time or room is a refusal that writes nothing, not a failure.
 func FuzzPageSVG(f *testing.F) {
 	for _, s := range []string{
 		"1 0 0 rg 10 10 40 40 re f",
@@ -32,14 +32,14 @@ func FuzzPageSVG(f *testing.F) {
 		d := pageWithFont(t, string(content), nil)
 		var out bytes.Buffer
 		err := PageSVG(d, 1, &out, SVGOptions{MaxBytes: 1 << 20, RasterScale: 1, MaxDuration: 2 * time.Second})
-		if errors.Is(err, ErrSVGTooLarge) {
+		if err != nil {
+			if !errors.Is(err, ErrSVGTooLarge) && !errors.Is(err, ErrTimedOut) {
+				t.Fatal(err)
+			}
 			if out.Len() != 0 {
 				t.Fatalf("a refused page wrote %d bytes", out.Len())
 			}
 			return
-		}
-		if err != nil && !errors.Is(err, ErrTimedOut) {
-			t.Fatal(err)
 		}
 		checkSVGDocument(t, out.Bytes())
 	})

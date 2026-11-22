@@ -386,18 +386,50 @@ func TestTheLimitHoldsForOneLargeMark(t *testing.T) {
 	}
 }
 
-func TestAPageThatRunsOutOfTimeIsWrittenAsFarAsItGot(t *testing.T) {
+// countingWriter records how many bytes and how many calls reached it.
+type countingWriter struct{ bytes, calls int }
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	c.calls++
+	c.bytes += len(p)
+	return len(p), nil
+}
+
+// No error leaves a byte in the writer: half a document reads as a whole one.
+func TestNoErrorLeavesBytesInTheWriter(t *testing.T) {
 	var content strings.Builder
 	for i := 0; i < 20000; i++ {
 		content.WriteString("0 0 1 1 re f ")
 	}
-	d := onePage(t, [4]float64{0, 0, 30, 20}, content.String(), nil)
-	var buf bytes.Buffer
-	err := PageSVG(d, 1, &buf, SVGOptions{MaxDuration: time.Nanosecond})
-	if !errors.Is(err, ErrTimedOut) {
-		t.Fatalf("want ErrTimedOut, got %v", err)
+	slow := onePage(t, [4]float64{0, 0, 30, 20}, content.String(), nil)
+	small := onePage(t, [4]float64{0, 0, 30, 20}, "0 g 0 0 5 5 re f", nil)
+	big := onePage(t, [4]float64{0, 0, 20000, 20000}, "0 g 0 0 5 5 re f", nil)
+	for _, c := range []struct {
+		name string
+		d    *reader.Document
+		page int
+		opt  SVGOptions
+		want error
+	}{
+		{"timeout", slow, 1, SVGOptions{MaxDuration: time.Nanosecond}, ErrTimedOut},
+		{"too large", slow, 1, SVGOptions{MaxBytes: 1000}, ErrSVGTooLarge},
+		{"no such page", small, 9, SVGOptions{}, nil},
+		{"past the pixel limit", big, 1, SVGOptions{}, nil},
+	} {
+		var w countingWriter
+		err := PageSVG(c.d, c.page, &w, c.opt)
+		if err == nil || (c.want != nil && !errors.Is(err, c.want)) {
+			t.Errorf("%s: err = %v, want %v", c.name, err, c.want)
+		}
+		if w.bytes != 0 || w.calls != 0 {
+			t.Errorf("%s: %d bytes in %d writes reached the writer", c.name, w.bytes, w.calls)
+		}
 	}
-	checkSVGDocument(t, buf.Bytes())
+	// A page that is written reaches the writer in one call, whole.
+	var w countingWriter
+	if err := PageSVG(small, 1, &w, SVGOptions{}); err != nil || w.calls != 1 || w.bytes == 0 {
+		t.Errorf("a good page: err %v, %d bytes in %d writes", err, w.bytes, w.calls)
+	}
 }
 
 func TestNumbersAreNeverNaNOrInfinite(t *testing.T) {
@@ -478,7 +510,7 @@ func TestTheDeviceMethodsDirectly(t *testing.T) {
 	// A group that can reach nothing is not opened.
 	g.softMask = make([]uint8, 40*40)
 	box := [4]float64{-50, -50, -40, -40}
-	if tok, ok := dev.beginGroup(&g, geometry.Identity(), &box); ok || tok != nil {
+	if ok := dev.beginGroup(&g, geometry.Identity(), box, true); ok || len(dev.groups) != 0 {
 		t.Error("a group off the page was opened")
 	}
 	g.softMask = nil
@@ -490,14 +522,14 @@ func TestTheDeviceMethodsDirectly(t *testing.T) {
 		t.Error("a device past its limit is not full")
 	}
 	small.shade(&g, nil)
-	if _, ok := small.beginGroup(&g, geometry.Identity(), nil); ok {
+	if ok := small.beginGroup(&g, geometry.Identity(), [4]float64{}, false); ok {
 		t.Error("a full device opened a group")
 	}
 	small.image(&g, &sampled{w: 1, h: 1, pix: []uint8{0, 0, 0, 255}})
 	small.fillPath(&g, p, g.ctm, vector.NonZero, nil)
 	small.strokePath(&g, p, g.ctm, nil)
 	small.embolden(&g, p, g.ctm, 1, nil)
-	small.clipPath(&g, p, g.ctm, vector.NonZero, nil)
+	small.clipPath(&g, p, g.ctm, vector.NonZero, [4]float64{}, false)
 	checkSVGDocument(t, dev.document())
 }
 

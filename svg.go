@@ -24,8 +24,9 @@ type SVGOptions struct {
 	// in size).
 	RasterScale float64
 	// MaxDuration is how long the page may be interpreted for, as for
-	// [Options.MaxDuration]. When it runs out the page is written as far as it
-	// got and [ErrTimedOut] is returned.
+	// [Options.MaxDuration]. When it runs out [ErrTimedOut] is returned and
+	// nothing is written: unlike a raster, a document cut short is not a
+	// smaller picture but malformed.
 	MaxDuration time.Duration
 }
 
@@ -47,7 +48,7 @@ const (
 // everything that has no equivalent in SVG 1.1 — tiling and shading patterns,
 // shadings, soft masks — is drawn by the pixel renderer and embedded as an
 // image where it falls. Text is written as outlines, so the output depends on no
-// font. The document holds only numbers, generated ids and base64 data: nothing
+// font. On any error but a failing writer nothing is written to w. The document holds only numbers, generated ids and base64 data: nothing
 // the PDF says is copied into it as text.
 func PageSVG(d *reader.Document, i int, w io.Writer, opt SVGOptions) error {
 	scale := opt.RasterScale
@@ -70,12 +71,15 @@ func PageSVG(d *reader.Document, i int, w io.Writer, opt SVGOptions) error {
 	if dev.full() {
 		return ErrSVGTooLarge
 	}
-	// Past this point the only error is a timeout, and the page is written as
-	// far as it got.
-	if _, werr := w.Write(dev.document()); werr != nil {
-		return werr
+	// A page that ran out of time is half a page, and half a page that reads as
+	// a whole one is worse than an error: nothing is written.
+	if err != nil {
+		return err
 	}
-	return err
+	// The document is built in memory, bounded by MaxBytes, and written in one
+	// call: no error leaves a partial document in w.
+	_, werr := w.Write(dev.document())
+	return werr
 }
 
 // num writes a coordinate: three decimals, no trailing zeros, and never NaN or
