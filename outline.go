@@ -8,6 +8,12 @@ import (
 	"github.com/go-pdfkit/reader"
 )
 
+// maxOutlinedGlyphs is how many converted outlines one font keeps. A font
+// program has at most 65 536 glyphs, but each outline is as large as the
+// program makes it, so what a font retains is bounded here too. A variable so
+// that a test can lower it.
+var maxOutlinedGlyphs = 4096
+
 // An Outliner reads the fonts of a document the way the renderer does, and
 // hands their glyphs out as shapes instead of drawing them. It is how a tool
 // that rewrites a content stream turns text into paths without a second
@@ -113,7 +119,10 @@ func (g *GlyphFont) Outline(code int) ([]GlyphSeg, bool) {
 	if !ok || len(segs) == 0 {
 		return nil, false
 	}
-	if out, hit := g.f.outlined[code]; hit {
+	// Keyed by the glyph, not the code: a CID font can map tens of thousands of
+	// codes onto one glyph, and each would otherwise keep a copy of it.
+	gi := g.f.glyphIndex(code)
+	if out, hit := g.f.outlined[gi]; hit {
 		return out, true
 	}
 	inv := 1 / g.f.perEm
@@ -136,10 +145,12 @@ func (g *GlyphFont) Outline(code int) ([]GlyphSeg, bool) {
 			out = append(out, GlyphSeg{Op: GlyphClose})
 		}
 	}
-	if g.f.outlined == nil {
-		g.f.outlined = map[int][]GlyphSeg{}
+	if len(g.f.outlined) < maxOutlinedGlyphs {
+		if g.f.outlined == nil {
+			g.f.outlined = map[opentype.GlyphIndex][]GlyphSeg{}
+		}
+		g.f.outlined[gi] = out
 	}
-	g.f.outlined[code] = out
 	return out, true
 }
 

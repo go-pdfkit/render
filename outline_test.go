@@ -193,3 +193,35 @@ func TestAnOutlinerReportsAndLeansAStandInForBoldAndItalic(t *testing.T) {
 		t.Error("the stand-in for an italic was not leaned")
 	}
 }
+
+// TestOutlinesAreKeptPerGlyphAndAtMostSoMany. A font can map tens of thousands
+// of codes onto one glyph, and a copy per code is what retained 159 MiB.
+func TestOutlinesAreKeptPerGlyphAndAtMostSoMany(t *testing.T) {
+	d := onePage(t, [4]float64{0, 0, 100, 100}, "",
+		reader.Dict{"Resources": reader.Dict{"Font": reader.Dict{"F": reader.Dict{
+			"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"),
+			"BaseFont": reader.Name("Helvetica"),
+			"Encoding": reader.Dict{"Type": reader.Name("Encoding"),
+				"Differences": reader.Array{reader.Integer(200), reader.Name("A")}}}}}})
+	o, entry := outlinerFor(t, d)
+	f, _ := o.Font(entry)
+	a, _ := f.Outline('A')
+	b, ok := f.Outline(200)
+	if !ok || &a[0] != &b[0] {
+		t.Fatal("two codes for one glyph were converted twice")
+	}
+	if n := len(f.f.outlined); n != 1 {
+		t.Errorf("%d outlines kept for one glyph", n)
+	}
+
+	was := maxOutlinedGlyphs
+	t.Cleanup(func() { maxOutlinedGlyphs = was })
+	maxOutlinedGlyphs = 1
+	c, ok := f.Outline('B')
+	if !ok || len(c) == 0 {
+		t.Fatal("no outline for B past the cap")
+	}
+	if n := len(f.f.outlined); n != 1 {
+		t.Errorf("%d outlines kept past a cap of 1", n)
+	}
+}

@@ -43,9 +43,9 @@ type pdfFont struct {
 	// that a failed read is not repeated either -- a page that shows a glyph the
 	// font does not carry shows it as often as any other.
 	missing map[opentype.GlyphIndex]bool
-	// outlined are the outlines [GlyphFont.Outline] has handed out, by code, in
-	// text space.
-	outlined map[int][]GlyphSeg
+	// outlined are the outlines [GlyphFont.Outline] has handed out, by glyph, in
+	// text space, at most maxOutlinedGlyphs of them.
+	outlined map[opentype.GlyphIndex][]GlyphSeg
 
 	// fontMatrix is a Type 3 font's glyph space, as a transform.
 	fontMatrix geometry.Matrix
