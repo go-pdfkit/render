@@ -3,6 +3,7 @@ package render
 import (
 	"testing"
 
+	"github.com/go-opentype/fonts/arimo"
 	"github.com/go-pdfkit/reader"
 )
 
@@ -145,5 +146,50 @@ func TestAnOutlinerRefusesWhatIsNotAFont(t *testing.T) {
 	d := onePage(t, [4]float64{0, 0, 10, 10}, "", nil)
 	if _, ok := NewOutliner(d).Font(reader.Integer(3)); ok {
 		t.Error("an integer read as a font")
+	}
+}
+
+// TestAnOutlinerReportsAndLeansAStandInForBoldAndItalic. A family reduced to
+// its regular face stands in for the bold (Embolden) and the italic (the
+// outline leans, as the renderer's matrix would lean it).
+func TestAnOutlinerReportsAndLeansAStandInForBoldAndItalic(t *testing.T) {
+	was := sansStandIn
+	t.Cleanup(func() { sansStandIn = was })
+	sansStandIn = &family{regular: &substitute{ttf: arimo.TTF}}
+
+	glyph := func(base string) (*GlyphFont, []GlyphSeg) {
+		t.Helper()
+		d := onePage(t, [4]float64{0, 0, 100, 100}, "BT /F 20 Tf 10 10 Td (H) Tj ET",
+			reader.Dict{"Resources": reader.Dict{"Font": reader.Dict{"F": reader.Dict{
+				"Type": reader.Name("Font"), "Subtype": reader.Name("Type1"),
+				"BaseFont": reader.Name(base)}}}})
+		o, entry := outlinerFor(t, d)
+		f, ok := o.Font(entry)
+		if !ok {
+			t.Fatalf("%s: the font was not read", base)
+		}
+		segs, ok := f.Outline('H')
+		if !ok {
+			t.Fatalf("%s: no outline", base)
+		}
+		return f, segs
+	}
+	plain, upright := glyph("Helvetica")
+	bold, _ := glyph("Helvetica-Bold")
+	slanted, leaned := glyph("Helvetica-Oblique")
+	if plain.Embolden() || !bold.Embolden() || slanted.Embolden() {
+		t.Errorf("Embolden: regular %v, bold %v, oblique %v", plain.Embolden(), bold.Embolden(), slanted.Embolden())
+	}
+	if len(upright) != len(leaned) {
+		t.Fatalf("segments: %d upright, %d leaned", len(upright), len(leaned))
+	}
+	moved := false
+	for i := range upright {
+		if upright[i].P != leaned[i].P {
+			moved = true
+		}
+	}
+	if !moved {
+		t.Error("the stand-in for an italic was not leaned")
 	}
 }
